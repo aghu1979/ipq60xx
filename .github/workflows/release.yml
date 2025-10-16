@@ -1,0 +1,71 @@
+name: 🚀 OpenWrt 固件发布
+
+on:
+  # 当主编译工作流成功完成时，自动触发此工作流
+  workflow_run:
+    workflows: ["🔨 OpenWrt 固件编译系统"]
+    types:
+      - completed
+    # 只有在编译成功时才执行
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+  # 也支持手动触发，方便重新发布
+  workflow_dispatch:
+
+# 设置权限
+permissions:
+  contents: write # 创建Release和上传文件需要写权限
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+
+      - name: 🌍 设置环境变量
+        run: echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
+
+      - name: 📥 下载所有构建产物
+        # 使用最新版本的download-artifact action
+        uses: actions/download-artifact@v4
+        with:
+          # 将所有产物下载到 artifacts 目录
+          path: artifacts
+          # 合并所有artifact到一个目录
+          merge-multiple: true
+
+      - name: 📦 准备发布内容
+        run: |
+          chmod +x scripts/*.sh
+          # 调用发布脚本，整理产物并生成Release Notes
+          ./scripts/release.sh prepare-release
+
+      - name: 🚀 创建 GitHub Release
+        # 使用最新版本的gh-release action
+        uses: softprops/action-gh-release@v2
+        with:
+          # Release Tag，例如 ipq60xx-20231201
+          tag_name: ipq60xx-${{ env.TIMESTAMP }}
+          # Release 标题
+          name: "OpenWrt 固件发布 - ${{ env.TIMESTAMP }}"
+          # Release 正文内容，从生成的markdown文件读取
+          body_path: release-notes.md
+          # Release 文件路径
+          files: |
+            release/*
+        env:
+          # GitHub Token，由Actions自动提供
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🧹 清理旧的 Artifacts
+        # 发布成功后，清理本次工作流产生的旧Artifacts以节省空间
+        if: success()
+        run: |
+          echo "🧹 开始清理旧的Artifacts..."
+          # 安装gh cli
+          sudo apt-get update && sudo apt-get install -y gh
+          # 登录gh cli
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+          # 删除超过7天的artifacts
+          gh api repos/:owner/:repo/actions/artifacts --jq '.artifacts[] | select(.created_at < (now - 604800 | strftime("%Y-%m-%dT%H:%M:%SZ"))) | .id' | xargs -I {} gh api --method DELETE repos/:owner/:repo/actions/artifacts/{}
+          echo "✅ Artifacts清理完成"
