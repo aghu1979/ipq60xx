@@ -1,0 +1,57 @@
+name: 🧹 仓库清理
+
+on:
+  # 每周一凌晨2点（UTC时间）自动运行
+  schedule:
+    - cron: '0 2 * * 1'
+  # 支持手动触发
+  workflow_dispatch:
+
+# 设置权限
+permissions:
+  contents: write # 删除Release需要写权限
+  actions: read   # 读取Artifacts列表需要读权限
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🌍 设置环境变量
+        run: |
+          # 设置保留天数，可在此修改
+          echo "DAYS_TO_KEEP=30" >> $GITHUB_ENV
+
+      - name: 🧹 清理旧的 Releases
+        run: |
+          echo "🧹 开始清理超过 ${{ env.DAYS_TO_KEEP }} 天的 Releases..."
+          # 安装gh cli
+          sudo apt-get update && sudo apt-get install -y jq
+          # 登录gh cli
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+          
+          # 获取所有Releases，筛选出超过保留天期的，并删除
+          gh release list --limit 500 --json tagName,createdAt | \
+          jq -r --arg days ${{ env.DAYS_TO_KEEP }} \
+          '.[] | select (.createdAt < (now - ($days | tonumber) * 24 * 3600 | strftime("%Y-%m-%dT%H:%M:%SZ"))) | .tagName' | \
+          while read -r tag; do
+            if [ -n "$tag" ]; then
+              echo "🗑️ 正在删除 Release: $tag"
+              gh release delete "$tag" --yes
+              echo "✅ 已删除 Release: $tag"
+            fi
+          done
+          echo "✅ Releases 清理完成"
+
+      - name: 🧹 清理旧的 Artifacts
+        # 注意：删除Artifacts需要actions: write权限，但为了安全，这里只读取并打印信息
+        # 实际删除操作已在release.yml中完成，或可以单独授予更高权限后执行
+        run: |
+          echo "🧹 开始检查超过 ${{ env.DAYS_TO_KEEP }} 天的 Artifacts..."
+          # 安装gh cli
+          sudo apt-get update && sudo apt-get install -y jq
+          # 登录gh cli
+          echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+          
+          # 列出所有旧的Artifacts（仅用于查看）
+          gh api repos/:owner/:repo/actions/artifacts --jq '.artifacts[] | select(.created_at < (now - (${{ env.DAYS_TO_KEEP }} | tonumber) * 24 * 3600 | strftime("%Y-%m-%dT%H:%M:%SZ"))) | {name: .name, created_at: .created_at, size_in_bytes: .size_in_bytes}'
+          echo "ℹ️ 已列出所有旧的Artifacts。实际删除操作请在 release.yml 中配置或为此工作流赋予 actions: write 权限。"
