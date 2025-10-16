@@ -416,32 +416,10 @@ prepare_base_environment() {
         cat "$base_luci_file" | sed 's/^/  - /'
     fi
     
-    print_step_result "基础配置文件合并完成"
-    
-    # 步骤7：应用基础配置 - 现在不会再丢失软件包了！
-    print_step_title "步骤7：应用基础配置"
-    log_info "⚙️ 应用基础配置..."
-    
-    # 提取格式化前的luci软件包
-    local before_format_file="${LOG_DIR}/${REPO_SHORT}-before-format-luci.txt"
-    extract_luci_packages "$merged_config" "$before_format_file"
-    
-    # 应用配置
-    if make defconfig > "${LOG_DIR}/${REPO_SHORT}-make-defconfig-base.log" 2>&1; then
-        log_success "✅ 基础配置应用成功"
-    else
-        log_warning "⚠️ 基础配置应用失败，但继续执行"
-    fi
-    
-    # 提取格式化后的luci软件包
-    local after_format_file="${LOG_DIR}/${REPO_SHORT}-after-format-luci.txt"
-    extract_luci_packages "$merged_config" "$after_format_file"
-    
-    # 对比格式化前后的软件包
-    local missing_format_file="${LOG_DIR}/${REPO_SHORT}-missing-format-luci.txt"
-    compare_luci_packages "$before_format_file" "$after_format_file" "$missing_format_file"
-    
-    print_step_result "基础配置应用完成"
+    # 步骤7：格式化和验证基础配置 - 立即执行！
+    print_step_title "步骤7：格式化和验证基础配置"
+    format_and_validate_config "base"
+    print_step_result "基础配置格式化和验证完成"
     
     # 步骤8：预下载依赖
     print_step_title "步骤8：预下载基础依赖"
@@ -535,52 +513,13 @@ build_firmware() {
         comm -13 "$base_luci_file" "$merged_luci_file" | sed 's/^/  - /' || echo "  - 无新增软件包"
     fi
     
-    print_step_result "软件包配置合并完成"
+    # 步骤2：格式化和验证最终配置 - 立即执行！
+    print_step_title "步骤2：格式化和验证最终配置文件"
+    format_and_validate_config "final"
+    print_step_result "最终配置文件格式化和验证完成"
     
-    # 步骤2：格式化最终配置文件
-    print_step_title "步骤2：格式化最终配置文件"
-    log_info "🎨 格式化最终配置文件..."
-    
-    # 提取格式化前的luci软件包
-    local before_final_format_file="${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-before-final-format.txt"
-    extract_luci_packages ".config" "$before_final_format_file"
-    
-    # 格式化配置
-    if ./scripts/config conf --defconfig=.config > "${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-config-format.log" 2>&1; then
-        log_success "✅ 配置格式化成功"
-    else
-        log_warning "⚠️ 配置格式化失败，但继续执行"
-    fi
-    
-    # 提取格式化后的luci软件包
-    local after_final_format_file="${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-after-final-format.txt"
-    extract_luci_packages ".config" "$after_final_format_file"
-    
-    # 对比格式化前后的软件包
-    local missing_final_format_file="${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-missing-final-format.txt"
-    compare_luci_packages "$before_final_format_file" "$after_final_format_file" "$missing_final_format_file"
-    
-    print_step_result "最终配置文件格式化完成"
-    
-    # 步骤3：验证最终配置文件
-    print_step_title "步骤3：验证最终配置文件"
-    log_info "🔍 验证最终配置文件..."
-    
-    if ./scripts/config conf --defconfig=.config --check > "${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-config-check.log" 2>&1; then
-        log_success "✅ 配置文件验证通过"
-    else
-        log_warning "⚠️ 配置文件验证失败，但继续执行"
-    fi
-    
-    # 输出配置验证摘要
-    echo -e "\n${COLOR_BLUE}📋 配置验证摘要：${COLOR_RESET}"
-    echo -e "${COLOR_GREEN}✅ 配置文件验证完成${COLOR_RESET}"
-    echo -e "${COLOR_CYAN}最终配置行数：$(wc -l < .config)${COLOR_RESET}"
-    
-    print_step_result "最终配置文件验证完成"
-    
-    # 步骤4：记录最终Luci软件包列表
-    print_step_title "步骤4：记录最终Luci软件包列表"
+    # 步骤3：记录最终Luci软件包列表
+    print_step_title "步骤3：记录最终Luci软件包列表"
     log_info "📋 记录合并后的Luci软件包..."
     
     local final_luci_file="${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-luci-apps.log"
@@ -599,8 +538,8 @@ build_firmware() {
     
     print_step_result "Luci软件包列表记录完成"
     
-    # 步骤5：编译固件
-    print_step_title "步骤5：编译固件"
+    # 步骤4：编译固件
+    print_step_title "步骤4：编译固件"
     log_info "🔥 开始编译固件..."
     
     # 记录编译开始时间
@@ -634,8 +573,8 @@ build_firmware() {
         exit 1
     fi
     
-    # 步骤6：处理产出物
-    print_step_title "步骤6：处理产出物"
+    # 步骤5：处理产出物
+    print_step_title "步骤5：处理产出物"
     process_artifacts
     print_step_result "产出物处理完成"
     
@@ -646,6 +585,65 @@ build_firmware() {
     show_system_resources
     
     log_success "✅ 固件 ${REPO_SHORT}-${CONFIG_LEVEL} 编译完成"
+}
+
+# =============================================================================
+# 格式化和验证配置函数
+# =============================================================================
+
+# 格式化和验证配置文件
+# 参数:
+#   $1 - 阶段标识 (base 或 final)
+format_and_validate_config() {
+    local stage="$1"
+    local config_name="${CONFIG_LEVEL}"
+    if [[ "$stage" == "base" ]]; then
+        config_name="base"
+    fi
+    
+    log_info "🎨 格式化${stage}配置文件..."
+    
+    # 提取格式化前的luci软件包
+    local before_file="${LOG_DIR}/${REPO_SHORT}-${config_name}-before-format.txt"
+    extract_luci_packages ".config" "$before_file"
+    
+    # 使用更详细的错误处理执行格式化
+    local format_log="${LOG_DIR}/${REPO_SHORT}-${config_name}-format.log"
+    if ./scripts/config conf --defconfig=.config > "$format_log" 2>&1; then
+        log_success "✅ ${stage}配置格式化成功"
+    else
+        log_error "❌ ${stage}配置格式化失败!"
+        log_error "📋 错误详情 (最后20行):"
+        tail -n 20 "$format_log" >&2
+        log_error "📋 完整日志: $format_log"
+        exit 1
+    fi
+    
+    # 提取格式化后的luci软件包
+    local after_file="${LOG_DIR}/${REPO_SHORT}-${config_name}-after-format.txt"
+    extract_luci_packages ".config" "$after_file"
+    
+    # 对比格式化前后的软件包
+    local missing_file="${LOG_DIR}/${REPO_SHORT}-${config_name}-missing-format.txt"
+    compare_luci_packages "$before_file" "$after_file" "$missing_file"
+    
+    # 验证配置文件
+    log_info "🔍 验证${stage}配置文件..."
+    local check_log="${LOG_DIR}/${REPO_SHORT}-${config_name}-check.log"
+    if ./scripts/config conf --defconfig=.config --check > "$check_log" 2>&1; then
+        log_success "✅ ${stage}配置验证通过"
+    else
+        log_error "❌ ${stage}配置验证失败!"
+        log_error "📋 错误详情 (最后20行):"
+        tail -n 20 "$check_log" >&2
+        log_error "📋 完整日志: $check_log"
+        exit 1
+    fi
+    
+    # 输出配置验证摘要
+    echo -e "\n${COLOR_BLUE}📋 ${stage}配置验证摘要：${COLOR_RESET}"
+    echo -e "${COLOR_GREEN}✅ 配置文件验证完成${COLOR_RESET}"
+    echo -e "${COLOR_CYAN}最终配置行数：$(wc -l < .config)${COLOR_RESET}"
 }
 
 # =============================================================================
