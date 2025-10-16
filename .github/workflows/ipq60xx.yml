@@ -95,6 +95,8 @@ jobs:
           BASE_MATRIX=$(jq -n \
             --argjson branches "$ALL_BRANCHES" \
             --argjson configs "$ALL_CONFIGS" \
+            --arg branch_filter "$BRANCH_FILTER" \
+            --arg config_filter "$CONFIG_FILTER" \
             --arg devices "${{ steps.extract-devices.outputs.devices }}" \
             '{
               include: [
@@ -204,6 +206,24 @@ jobs:
           sort -u openwrt/.config -o openwrt/.config
           
           echo -e "${ICON_SUCCESS} Ultra 配置合并完成"
+
+      - name: ${{ env.ICON_DEBUG }} 验证配置差异
+        run: |
+          echo -e "${ICON_DEBUG} 验证配置合并差异..."
+          
+          # 提取合并前的luci-app软件包
+          BEFORE_PACKAGES=$(grep -h "CONFIG_PACKAGE_luci-app-.*=y" configs/base_ipq60xx.config configs/base_${{ matrix.branch.short }}.config configs/Ultra.config | sort -u)
+          
+          # 提取合并后的luci-app软件包
+          AFTER_PACKAGES=$(grep "CONFIG_PACKAGE_luci-app-.*=y" openwrt/.config | sort -u)
+          
+          # 比较差异
+          if [ "$BEFORE_PACKAGES" != "$AFTER_PACKAGES" ]; then
+            echo -e "${ICON_WARNING} 发现配置差异 (合并前 vs 合并后):"
+            diff --unified=0 --label="合并前" --label="合并后" <(echo "$BEFORE_PACKAGES") <(echo "$AFTER_PACKAGES") || true
+          else
+            echo -e "${ICON_SUCCESS} 配置合并验证通过，无差异。"
+          fi
 
       - name: ${{ env.ICON_PACKAGE }} 更新和安装Feeds
         if: steps.cache-ultra.outputs.cache-hit != 'true'
