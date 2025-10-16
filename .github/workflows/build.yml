@@ -42,7 +42,6 @@ jobs:
       matrix:
         branch: [openwrt, immwrt, libwrt]
     outputs:
-      # 输出每个分支的哈希值
       openwrt-hash: ${{ steps.set_hash.outputs.openwrt-hash }}
       immwrt-hash: ${{ steps.set_hash.outputs.immwrt-hash }}
       libwrt-hash: ${{ steps.set_hash.outputs.libwrt-hash }}
@@ -50,13 +49,26 @@ jobs:
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
+      - name: 🧹 清理磁盘空间
+        uses: easimon/maximize-build-space@master
+        with:
+          # 保留2GB空间
+          reserve-space: 2
+          # 删除.NET
+          remove-dotnet: 'true'
+          # 删除Android SDK
+          remove-android: 'true'
+          # 删除Haskell
+          remove-haskell: 'true'
+          # 删除其他大文件
+          remove-large-files: 'true'
+
       - name: 🌍 设置环境变量
         run: |
           echo "REPO_SHORT=${{ matrix.branch }}" >> $GITHUB_ENV
           echo "SOC_NAME=ipq60xx" >> $GITHUB_ENV
           echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
           
-          # 根据分支设置仓库URL
           if [[ "${{ matrix.branch }}" == "openwrt" ]]; then
             echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB_ENV
           elif [[ "${{ matrix.branch }}" == "immwrt" ]]; then
@@ -68,17 +80,8 @@ jobs:
       - name: 🔐 计算基础配置哈希
         id: calc_hash
         run: |
-          # 计算芯片配置和分支配置的合并哈希
           HASH=$(sha256sum configs/base_${SOC_NAME}.config configs/base_${REPO_SHORT}.config | sha256sum | cut -d' ' -f1)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
-          echo "🔑 Base Config Hash for ${{ matrix.branch }}: $HASH"
-          
-          # 将哈希值写入环境变量，供后续步骤使用
-          echo "${{ matrix.branch }}_HASH=$HASH" >> $GITHUB_ENV
-
-      - name: 📝 保存哈希值到文件
-        run: |
-          # 将哈希值保存到文件，供后续job使用
           echo "${{ matrix.branch }}=${{ steps.calc_hash.outputs.hash }}" >> ${{ github.workspace }}/hashes.txt
 
       - name: 💾 缓存基础环境
@@ -88,7 +91,6 @@ jobs:
             build/${{ matrix.branch }}/
             dl/
             feeds/
-          # 缓存键：分支 + 基础配置哈希
           key: base-${{ matrix.branch }}-${{ steps.calc_hash.outputs.hash }}
           restore-keys: |
             base-${{ matrix.branch }}-
@@ -101,7 +103,6 @@ jobs:
           ./scripts/build.sh prepare-base
 
       - name: 📤 上传哈希文件
-        # 只有当是最后一个矩阵任务时才上传，避免覆盖
         if: matrix.branch == 'libwrt'
         uses: actions/upload-artifact@v4
         with:
@@ -119,43 +120,34 @@ jobs:
       matrix:
         branch: [openwrt, immwrt, libwrt]
         config: [Pro, Max, Ultra]
+    if: |
+      (github.event.inputs.branch == '' || github.event.inputs.branch == matrix.branch) &&
+      (github.event.inputs.config == '' || github.event.inputs.config == matrix.config)
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      - name: 🔍 检查是否需要跳过当前矩阵任务
-        id: check_skip
-        run: |
-          # 检查手动触发时的输入参数，决定是否跳过当前矩阵任务
-          SKIP_BUILD=false
-          
-          # 如果手动指定了分支，且不等于当前矩阵分支，则跳过
-          if [[ "${{ github.event.inputs.branch }}" != "" && "${{ github.event.inputs.branch }}" != "${{ matrix.branch }}" ]]; then
-            SKIP_BUILD=true
-          fi
-          
-          # 如果手动指定了配置，且不等于当前矩阵配置，则跳过
-          if [[ "${{ github.event.inputs.config }}" != "" && "${{ github.event.inputs.config }}" != "${{ matrix.config }}" ]]; then
-            SKIP_BUILD=true
-          fi
-          
-          echo "skip=$SKIP_BUILD" >> $GITHUB_OUTPUT
-          
-          if [[ "$SKIP_BUILD" == "true" ]]; then
-            echo "⏭️ 跳过构建: ${{ matrix.branch }}-${{ matrix.config }}"
-          else
-            echo "🔨 开始构建: ${{ matrix.branch }}-${{ matrix.config }}"
-          fi
+      - name: 🧹 清理磁盘空间
+        uses: easimon/maximize-build-space@master
+        with:
+          # 保留2GB空间
+          reserve-space: 2
+          # 删除.NET
+          remove-dotnet: 'true'
+          # 删除Android SDK
+          remove-android: 'true'
+          # 删除Haskell
+          remove-haskell: 'true'
+          # 删除其他大文件
+          remove-large-files: 'true'
 
       - name: 🌍 设置环境变量
-        if: steps.check_skip.outputs.skip == 'false'
         run: |
           echo "REPO_SHORT=${{ matrix.branch }}" >> $GITHUB_ENV
           echo "SOC_NAME=ipq60xx" >> $GITHUB_ENV
           echo "CONFIG_LEVEL=${{ matrix.config }}" >> $GITHUB_ENV
           echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
           
-          # 根据分支设置仓库URL
           if [[ "${{ matrix.branch }}" == "openwrt" ]]; then
             echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB_ENV
           elif [[ "${{ matrix.branch }}" == "immwrt" ]]; then
@@ -165,7 +157,6 @@ jobs:
           fi
 
       - name: 📥 下载哈希文件
-        if: steps.check_skip.outputs.skip == 'false'
         uses: actions/download-artifact@v4
         with:
           name: hashes-file
@@ -173,32 +164,35 @@ jobs:
 
       - name: 🔍 读取对应分支的哈希值
         id: get_hash
-        if: steps.check_skip.outputs.skip == 'false'
         run: |
-          # 从文件中读取对应分支的哈希值
           HASH=$(grep "^${{ matrix.branch }}=" hashes.txt | cut -d'=' -f2)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
-          echo "🔑 Retrieved hash for ${{ matrix.branch }}: $HASH"
 
       - name: 💾 恢复基础环境缓存
-        if: steps.check_skip.outputs.skip == 'false'
         uses: actions/cache@v4
         with:
           path: |
             build/${{ matrix.branch }}/
             dl/
             feeds/
-          # 使用上一步读取的哈希值
           key: base-${{ matrix.branch }}-${{ steps.get_hash.outputs.hash }}
 
       - name: 🔨 编译固件
-        if: steps.check_skip.outputs.skip == 'false'
         run: |
           chmod +x scripts/*.sh
           ./scripts/build.sh build-firmware
 
+      - name: 📊 显示系统资源使用情况
+        if: always()
+        run: |
+          echo "=========================================="
+          echo "📊 系统资源使用情况"
+          echo "=========================================="
+          df -h
+          free -h
+          echo "=========================================="
+
       - name: 📤 上传构建产物
-        if: steps.check_skip.outputs.skip == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.branch }}-${{ matrix.config }}
