@@ -73,48 +73,8 @@ jobs:
             exit 1
           fi
 
-      - name: 🧹 清理磁盘空间 (官方Action)
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const { execSync } = require('child_process');
-            
-            console.log('🔍 初始磁盘使用情况：');
-            execSync('df -h', { stdio: 'inherit' });
-            
-            console.log('');
-            console.log('🧹 开始清理不必要的文件...');
-            
-            // 清理命令列表
-            const cleanupCommands = [
-              'sudo docker system prune -af --volumes || true',
-              'sudo apt-get clean',
-              'sudo apt-get autoremove -y',
-              'sudo rm -rf /usr/share/dotnet',
-              'sudo rm -rf /opt/ghc',
-              'sudo rm -rf /usr/local/share/boost',
-              'sudo rm -rf "$AGENT_TOOLSDIRECTORY"',
-              'sudo journalctl --vacuum-time=1d',
-              'sudo find /var/log -type f -delete',
-              'sudo rm -rf /tmp/*',
-              'sudo rm -rf /var/tmp/*',
-              'sudo rm -rf ~/.cache',
-              'sudo rm -rf /var/cache/*'
-            ];
-            
-            // 执行清理命令
-            cleanupCommands.forEach(cmd => {
-              try {
-                console.log(`执行: ${cmd}`);
-                execSync(cmd, { stdio: 'inherit' });
-              } catch (error) {
-                console.log(`命令失败: ${cmd}`);
-              }
-            });
-            
-            console.log('');
-            console.log('✅ 清理完成，磁盘使用情况：');
-            execSync('df -h', { stdio: 'inherit' });
+      - name: 🧹 清理磁盘空间
+        uses: sbwml/actions@free-disk
 
       - name: 🌍 设置环境变量
         run: |
