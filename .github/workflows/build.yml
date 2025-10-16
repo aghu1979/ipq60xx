@@ -30,8 +30,6 @@ env:
   REPO_OPENWRT: https://github.com/openwrt/openwrt.git
   REPO_IMMWRT: https://github.com/immortalwrt/immortalwrt.git
   REPO_LIBWRT: https://github.com/openwrt/openwrt.git
-  # 设置工作目录环境变量
-  WORKSPACE_ROOT: ${{ github.workspace }}
 
 jobs:
   # ========================================
@@ -55,7 +53,6 @@ jobs:
         run: |
           echo "🔍 当前工作目录: $(pwd)"
           echo "🔍 GITHUB_WORKSPACE: ${{ github.workspace }}"
-          echo "🔍 WORKSPACE_ROOT: ${{ env.WORKSPACE_ROOT }}"
           echo ""
           echo "📁 根目录结构："
           ls -la
@@ -76,31 +73,48 @@ jobs:
             exit 1
           fi
 
-      - name: 🧹 清理磁盘空间
-        uses: easimon/maximize-build-space@master
+      - name: 🧹 清理磁盘空间 (官方Action)
+        uses: actions/github-script@v7
         with:
-          # 根分区保留空间 (MB)
-          root-reserve-mb: 2048
-          # 临时目录保留空间 (MB)
-          temp-reserve-mb: 1024
-          # 交换空间大小 (MB)
-          swap-size-mb: 1024
-          # 删除.NET
-          remove-dotnet: 'true'
-          # 删除Android SDK
-          remove-android: 'true'
-          # 删除Haskell
-          remove-haskell: 'true'
-          # 删除CodeQL
-          remove-codeql: 'true'
-          # 删除Docker镜像
-          remove-docker-images: 'true'
-
-      - name: 🔄 切换到工作目录
-        run: |
-          echo "🔄 切换到工作目录: ${{ env.WORKSPACE_ROOT }}"
-          cd "${{ env.WORKSPACE_ROOT }}"
-          echo "📍 当前工作目录: $(pwd)"
+          script: |
+            const { execSync } = require('child_process');
+            
+            console.log('🔍 初始磁盘使用情况：');
+            execSync('df -h', { stdio: 'inherit' });
+            
+            console.log('');
+            console.log('🧹 开始清理不必要的文件...');
+            
+            // 清理命令列表
+            const cleanupCommands = [
+              'sudo docker system prune -af --volumes || true',
+              'sudo apt-get clean',
+              'sudo apt-get autoremove -y',
+              'sudo rm -rf /usr/share/dotnet',
+              'sudo rm -rf /opt/ghc',
+              'sudo rm -rf /usr/local/share/boost',
+              'sudo rm -rf "$AGENT_TOOLSDIRECTORY"',
+              'sudo journalctl --vacuum-time=1d',
+              'sudo find /var/log -type f -delete',
+              'sudo rm -rf /tmp/*',
+              'sudo rm -rf /var/tmp/*',
+              'sudo rm -rf ~/.cache',
+              'sudo rm -rf /var/cache/*'
+            ];
+            
+            // 执行清理命令
+            cleanupCommands.forEach(cmd => {
+              try {
+                console.log(`执行: ${cmd}`);
+                execSync(cmd, { stdio: 'inherit' });
+              } catch (error) {
+                console.log(`命令失败: ${cmd}`);
+              }
+            });
+            
+            console.log('');
+            console.log('✅ 清理完成，磁盘使用情况：');
+            execSync('df -h', { stdio: 'inherit' });
 
       - name: 🌍 设置环境变量
         run: |
@@ -119,8 +133,6 @@ jobs:
       - name: 🔐 计算基础配置哈希
         id: calc_hash
         run: |
-          # 确保在正确的工作目录
-          cd "${{ env.WORKSPACE_ROOT }}"
           echo "📍 当前工作目录: $(pwd)"
           
           # 检查配置文件是否存在
@@ -140,15 +152,15 @@ jobs:
           # 计算哈希值
           HASH=$(sha256sum configs/base_${SOC_NAME}.config configs/base_${REPO_SHORT}.config | sha256sum | cut -d' ' -f1)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
-          echo "${{ matrix.branch }}=${{ steps.calc_hash.outputs.hash }}" >> ${{ env.WORKSPACE_ROOT }}/hashes.txt
+          echo "${{ matrix.branch }}=${{ steps.calc_hash.outputs.hash }}" >> hashes.txt
 
       - name: 💾 缓存基础环境
         uses: actions/cache@v4
         with:
           path: |
-            ${{ env.WORKSPACE_ROOT }}/build/${{ matrix.branch }}/
-            ${{ env.WORKSPACE_ROOT }}/dl/
-            ${{ env.WORKSPACE_ROOT }}/feeds/
+            build/${{ matrix.branch }}/
+            dl/
+            feeds/
           key: base-${{ matrix.branch }}-${{ steps.calc_hash.outputs.hash }}
           restore-keys: |
             base-${{ matrix.branch }}-
@@ -156,8 +168,6 @@ jobs:
       - name: 🚀 准备基础环境
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          # 确保在正确的工作目录
-          cd "${{ env.WORKSPACE_ROOT }}"
           echo "📦 为 ${{ matrix.branch }} 准备基础环境..."
           chmod +x scripts/*.sh
           ./scripts/build.sh prepare-base
@@ -167,7 +177,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hashes-file
-          path: ${{ env.WORKSPACE_ROOT }}/hashes.txt
+          path: hashes.txt
 
   # ========================================
   # 阶段二：在基础环境上编译最终固件
@@ -184,25 +194,48 @@ jobs:
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      - name: 🧹 清理磁盘空间
-        uses: easimon/maximize-build-space@master
+      - name: 🧹 清理磁盘空间 (官方Action)
+        uses: actions/github-script@v7
         with:
-          # 根分区保留空间 (MB)
-          root-reserve-mb: 2048
-          # 临时目录保留空间 (MB)
-          temp-reserve-mb: 1024
-          # 交换空间大小 (MB)
-          swap-size-mb: 1024
-          # 删除.NET
-          remove-dotnet: 'true'
-          # 删除Android SDK
-          remove-android: 'true'
-          # 删除Haskell
-          remove-haskell: 'true'
-          # 删除CodeQL
-          remove-codeql: 'true'
-          # 删除Docker镜像
-          remove-docker-images: 'true'
+          script: |
+            const { execSync } = require('child_process');
+            
+            console.log('🔍 初始磁盘使用情况：');
+            execSync('df -h', { stdio: 'inherit' });
+            
+            console.log('');
+            console.log('🧹 开始清理不必要的文件...');
+            
+            // 清理命令列表
+            const cleanupCommands = [
+              'sudo docker system prune -af --volumes || true',
+              'sudo apt-get clean',
+              'sudo apt-get autoremove -y',
+              'sudo rm -rf /usr/share/dotnet',
+              'sudo rm -rf /opt/ghc',
+              'sudo rm -rf /usr/local/share/boost',
+              'sudo rm -rf "$AGENT_TOOLSDIRECTORY"',
+              'sudo journalctl --vacuum-time=1d',
+              'sudo find /var/log -type f -delete',
+              'sudo rm -rf /tmp/*',
+              'sudo rm -rf /var/tmp/*',
+              'sudo rm -rf ~/.cache',
+              'sudo rm -rf /var/cache/*'
+            ];
+            
+            // 执行清理命令
+            cleanupCommands.forEach(cmd => {
+              try {
+                console.log(`执行: ${cmd}`);
+                execSync(cmd, { stdio: 'inherit' });
+              } catch (error) {
+                console.log(`命令失败: ${cmd}`);
+              }
+            });
+            
+            console.log('');
+            console.log('✅ 清理完成，磁盘使用情况：');
+            execSync('df -h', { stdio: 'inherit' });
 
       - name: 🔍 检查是否需要跳过当前矩阵任务
         id: check_skip
@@ -228,13 +261,6 @@ jobs:
             echo "🔨 开始构建: ${{ matrix.branch }}-${{ matrix.config }}"
           fi
 
-      - name: 🔄 切换到工作目录
-        if: steps.check_skip.outputs.skip == 'false'
-        run: |
-          echo "🔄 切换到工作目录: ${{ env.WORKSPACE_ROOT }}"
-          cd "${{ env.WORKSPACE_ROOT }}"
-          echo "📍 当前工作目录: $(pwd)"
-
       - name: 🌍 设置环境变量
         if: steps.check_skip.outputs.skip == 'false'
         run: |
@@ -256,14 +282,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: hashes-file
-          path: ${{ env.WORKSPACE_ROOT }}
+          path: .
 
       - name: 🔍 读取对应分支的哈希值
         id: get_hash
         if: steps.check_skip.outputs.skip == 'false'
         run: |
-          # 确保在正确的工作目录
-          cd "${{ env.WORKSPACE_ROOT }}"
           # 从文件中读取对应分支的哈希值
           HASH=$(grep "^${{ matrix.branch }}=" hashes.txt | cut -d'=' -f2)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
@@ -274,17 +298,15 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ${{ env.WORKSPACE_ROOT }}/build/${{ matrix.branch }}/
-            ${{ env.WORKSPACE_ROOT }}/dl/
-            ${{ env.WORKSPACE_ROOT }}/feeds/
+            build/${{ matrix.branch }}/
+            dl/
+            feeds/
           # 使用上一步读取的哈希值
           key: base-${{ matrix.branch }}-${{ steps.get_hash.outputs.hash }}
 
       - name: 🔨 编译固件
         if: steps.check_skip.outputs.skip == 'false'
         run: |
-          # 确保在正确的工作目录
-          cd "${{ env.WORKSPACE_ROOT }}"
           chmod +x scripts/*.sh
           ./scripts/build.sh build-firmware
 
@@ -304,6 +326,6 @@ jobs:
         with:
           name: firmware-${{ matrix.branch }}-${{ matrix.config }}
           path: |
-            ${{ env.WORKSPACE_ROOT }}/output/
-            ${{ env.WORKSPACE_ROOT }}/logs/
+            output/
+            logs/
           retention-days: 7
