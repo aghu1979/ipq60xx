@@ -609,7 +609,8 @@ format_and_validate_config() {
     
     # 使用更详细的错误处理执行格式化
     local format_log="${LOG_DIR}/${REPO_SHORT}-${config_name}-format.log"
-    if ./scripts/config conf --defconfig=.config > "$format_log" 2>&1; then
+    # --- 修改点 1 ---
+    if ./scripts/config/conf --defconfig=.config > "$format_log" 2>&1; then
         log_success "✅ ${stage}配置格式化成功"
     else
         log_error "❌ ${stage}配置格式化失败!"
@@ -630,7 +631,8 @@ format_and_validate_config() {
     # 验证配置文件
     log_info "🔍 验证${stage}配置文件..."
     local check_log="${LOG_DIR}/${REPO_SHORT}-${config_name}-check.log"
-    if ./scripts/config conf --defconfig=.config --check > "$check_log" 2>&1; then
+    # --- 修改点 2 ---
+    if ./scripts/config/conf --defconfig=.config --check > "$check_log" 2>&1; then
         log_success "✅ ${stage}配置验证通过"
     else
         log_error "❌ ${stage}配置验证失败!"
