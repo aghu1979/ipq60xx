@@ -1,0 +1,168 @@
+name: OpenWrt 固件编译系统
+
+on:
+  schedule:
+    - cron: '0 16 * * 4'  # 北京时间每周五0点 (UTC+8 = UTC-8)
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '选择分支'
+        required: true
+        default: 'openwrt'
+        type: choice
+        options:
+          - openwrt
+          - immwrt
+          - libwrt
+      soc:
+        description: '选择芯片'
+        required: true
+        default: 'ipq60xx'
+        type: choice
+        options:
+          - ipq60xx
+      config:
+        description: '选择配置级别'
+        required: true
+        default: 'Pro'
+        type: choice
+        options:
+          - Pro
+          - Max
+          - Ultra
+
+env:
+  UBUNTU_VERSION: 22.04
+  REPO_OPENWRT: https://github.com/openwrt/openwrt.git
+  REPO_IMMWRT: https://github.com/immortalwrt/immortalwrt.git
+  REPO_LIBWRT: https://github.com/openwrt/openwrt.git
+  FEEDS_CONF: feeds.conf.default
+  CONFIG_FILE: .config
+
+jobs:
+  # 阶段1: 准备基础环境
+  prepare-base:
+    runs-on: ubuntu-${{ env.UBUNTU_VERSION }}
+    outputs:
+      base-hash: ${{ steps.hash.outputs.hash }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置环境变量
+        run: |
+          echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB_ENV
+          echo "REPO_BRANCH=master" >> $GITHUB_ENV
+          echo "REPO_SHORT=openwrt" >> $GITHUB_ENV
+          echo "SOC_NAME=ipq60xx" >> $GITHUB_ENV
+          echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
+
+      - name: 计算基础配置哈希
+        id: hash
+        run: |
+          HASH=$(sha256sum configs/base_${SOC_NAME}.config configs/base_${REPO_SHORT}.config | sha256sum | cut -d' ' -f1)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+
+      - name: 缓存基础环境
+        uses: actions/cache@v3
+        with:
+          path: |
+            base-env/
+            dl/
+            feeds/
+          key: base-${{ env.SOC_NAME }}-${{ env.REPO_SHORT }}-${{ steps.hash.outputs.hash }}
+          restore-keys: |
+            base-${{ env.SOC_NAME }}-${{ env.REPO_SHORT }}-
+
+      - name: 准备基础环境
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/build.sh prepare-base
+
+  # 阶段2: 编译固件
+  build:
+    needs: prepare-base
+    runs-on: ubuntu-${{ env.UBUNTU_VERSION }}
+    strategy:
+      matrix:
+        branch: [openwrt, immwrt, libwrt]
+        soc: [ipq60xx]
+        config: [Pro, Max, Ultra]
+        include:
+          - branch: openwrt
+            repo_url: ${{ env.REPO_OPENWRT }}
+            repo_branch: master
+            repo_short: openwrt
+          - branch: immwrt
+            repo_url: ${{ env.REPO_IMMWRT }}
+            repo_branch: master
+            repo_short: immwrt
+          - branch: libwrt
+            repo_url: ${{ env.REPO_LIBWRT }}
+            repo_branch: master
+            repo_short: libwrt
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置环境变量
+        run: |
+          echo "REPO_URL=${{ matrix.repo_url }}" >> $GITHUB_ENV
+          echo "REPO_BRANCH=${{ matrix.repo_branch }}" >> $GITHUB_ENV
+          echo "REPO_SHORT=${{ matrix.repo_short }}" >> $GITHUB_ENV
+          echo "SOC_NAME=${{ matrix.soc }}" >> $GITHUB_ENV
+          echo "CONFIG_LEVEL=${{ matrix.config }}" >> $GITHUB_ENV
+          echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
+
+      - name: 恢复基础环境缓存
+        uses: actions/cache@v3
+        with:
+          path: |
+            base-env/
+            dl/
+            feeds/
+          key: base-${{ matrix.soc }}-${{ matrix.repo_short }}-${{ needs.prepare-base.outputs.base-hash }}
+
+      - name: 编译固件
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/build.sh build-firmware
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v3
+        with:
+          name: firmware-${{ matrix.repo_short }}-${{ matrix.soc }}-${{ matrix.config }}
+          path: |
+            output/
+            logs/
+          retention-days: 7
+
+  # 阶段3: 发布
+  release:
+    needs: build
+    runs-on: ubuntu-${{ env.UBUNTU_VERSION }}
+    if: github.event_name == 'schedule'
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: 准备发布
+        run: |
+          chmod +x scripts/*.sh
+          ./scripts/release.sh prepare-release
+
+      - name: 创建Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ipq60xx-${{ env.TIMESTAMP }}
+          body_path: release-notes.md
+          files: |
+            release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
