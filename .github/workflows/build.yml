@@ -42,12 +42,12 @@ jobs:
       matrix:
         include:
           - branch: openwrt
-          branch: immwrt
-          branch: libwrt
+          - branch: immwrt
+          - branch: libwrt
         config:
-          - config: Pro
-          config: max
-          config: ultra
+          - Pro
+          - max
+          - ultra
     outputs:
       openwrt-hash: ${{ steps.set_hash.outputs.openwrt-hash }}
       immwrt-hash: ${{ steps.set_hash.outputs.immwrt-hash }}
@@ -111,11 +111,11 @@ jobs:
           echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
           
           if [[ "${{ matrix.branch }}" == "openwrt" ]]; then
-            echo "REPO_URL=${{ env.REPO_OPENWRT}" >> $GITHUB_ENV
+            echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB_ENV
           elif [[ "${{ matrix.branch }}" == "immwrt" ]]; then
-            echo "REPO_URL=${{ env.REPO_IMMWRT}" >> $GITHUB_ENV
+            echo "REPO_URL=${{ env.REPO_IMMWRT }}" >> $GITHUB_ENV
           else
-            echo "REPO_URL=${{ env.REPO_LIBWRT}" >> $GITHUB_ENV
+            echo "REPO_URL=${{ env.REPO_LIBWRT }}" >> $GITHUB_ENV
           fi
 
       - name: 🔐 计算基础配置哈希
@@ -149,9 +149,9 @@ jobs:
             build/${{ matrix.branch }}/
             dl/
             feeds/
-          key: base-${{ matrix.branch }}-${{ steps.calc_hash.outputs.hash }
+          key: base-${{ matrix.branch }}-${{ steps.calc_hash.outputs.hash }}
           restore-keys: |
-            base-${{ matrix.branch }-
+            base-${{ matrix.branch }}-
 
       - name: 🚀 准备基础环境
         if: steps.cache.outputs.cache-hit != 'true'
@@ -171,27 +171,33 @@ jobs:
   # 阶段二：在基础环境上编译最终固件
   # ========================================
   build-firmware:
-    needs: prepare-base-en障
+    needs: prepare-base-environments
     runs-on: ubuntu-22.04
-     strategy:
+    strategy:
       fail-fast: false
       matrix:
         include:
           - branch: openwrt
-          config: Pro
-          config: max
-          config: ultra
+            config: Pro
+          - branch: openwrt
+            config: max
+          - branch: openwrt
+            config: ultra
           - branch: immwrt
             config: Pro
+          - branch: immwrt
             config: max
+          - branch: immwrt
             config: ultra
           - branch: libwrt
             config: Pro
+          - branch: libwrt
             config: max
+          - branch: libwrt
             config: ultra
     steps:
       - name: 📥 检出代码
-        uses: actions/build@v4
+        uses: actions/checkout@v4
 
       - name: 🧹 清理磁盘空间 (sbwml/actions/free-disk@main)
         uses: sbwml/actions/free-disk@main
@@ -247,11 +253,11 @@ jobs:
           echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
           
           if [[ "${{ matrix.branch }}" == "openwrt" ]]; then
-            echo "REPO_URL=${{ env.REPO_OPENWRT}" >> $G�始化
+            echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB_ENV
           elif [[ "${{ matrix.branch }}" == "immwrt" ]]; then
-            echo "REPO_URL=${{ env.REPO_IMMWRT}" >> $GITHUB_ENV
+            echo "REPO_URL=${{ env.REPO_IMMWRT }}" >> $GITHUB_ENV
           else
-            echo "REPO_URL=${ env.REPO_LIBWRT}" >> $GITHUB_ENV
+            echo "REPO_URL=${{ env.REPO_LIBWRT }}" >> $GITHUB_ENV
           fi
 
       - name: 📥 下载哈希文件
@@ -277,7 +283,7 @@ jobs:
             build/${{ matrix.branch }}/
             dl/
             feeds/
-          key: base-${{ matrix.branch }}-${{ steps.get_hash.outputs.hash }
+          key: base-${{ matrix.branch }}-${{ steps.get_hash.outputs.hash }}
 
       - name: 🔨 编译固件
         if: steps.check_skip.outputs.skip == 'false'
@@ -289,14 +295,14 @@ jobs:
         if: always() && steps.check_skip.outputs.skip == 'false'
         run: |
           echo "=========================================="
-          echo "📊 瓊 系统资源使用情况"
+          echo "📊 系统资源使用情况"
           echo "=========================================="
           df -h
           free -h
           echo "=========================================="
 
       - name: 📤 上传构建产物
-        if: steps.check_skip.outputs.skip == 'reserve-size: 64
+        if: steps.check_skip.outputs.skip == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.branch }}-${{ matrix.config }}
