@@ -119,15 +119,36 @@ jobs:
       matrix:
         branch: [openwrt, immwrt, libwrt]
         config: [Pro, Max, Ultra]
-    # 手动触发时的过滤逻辑
-    if: |
-      (github.event.inputs.branch == '' || github.event.inputs.branch == matrix.branch) &&
-      (github.event.inputs.config == '' || github.event.inputs.config == matrix.config)
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
+      - name: 🔍 检查是否需要跳过当前矩阵任务
+        id: check_skip
+        run: |
+          # 检查手动触发时的输入参数，决定是否跳过当前矩阵任务
+          SKIP_BUILD=false
+          
+          # 如果手动指定了分支，且不等于当前矩阵分支，则跳过
+          if [[ "${{ github.event.inputs.branch }}" != "" && "${{ github.event.inputs.branch }}" != "${{ matrix.branch }}" ]]; then
+            SKIP_BUILD=true
+          fi
+          
+          # 如果手动指定了配置，且不等于当前矩阵配置，则跳过
+          if [[ "${{ github.event.inputs.config }}" != "" && "${{ github.event.inputs.config }}" != "${{ matrix.config }}" ]]; then
+            SKIP_BUILD=true
+          fi
+          
+          echo "skip=$SKIP_BUILD" >> $GITHUB_OUTPUT
+          
+          if [[ "$SKIP_BUILD" == "true" ]]; then
+            echo "⏭️ 跳过构建: ${{ matrix.branch }}-${{ matrix.config }}"
+          else
+            echo "🔨 开始构建: ${{ matrix.branch }}-${{ matrix.config }}"
+          fi
+
       - name: 🌍 设置环境变量
+        if: steps.check_skip.outputs.skip == 'false'
         run: |
           echo "REPO_SHORT=${{ matrix.branch }}" >> $GITHUB_ENV
           echo "SOC_NAME=ipq60xx" >> $GITHUB_ENV
@@ -144,6 +165,7 @@ jobs:
           fi
 
       - name: 📥 下载哈希文件
+        if: steps.check_skip.outputs.skip == 'false'
         uses: actions/download-artifact@v4
         with:
           name: hashes-file
@@ -151,6 +173,7 @@ jobs:
 
       - name: 🔍 读取对应分支的哈希值
         id: get_hash
+        if: steps.check_skip.outputs.skip == 'false'
         run: |
           # 从文件中读取对应分支的哈希值
           HASH=$(grep "^${{ matrix.branch }}=" hashes.txt | cut -d'=' -f2)
@@ -158,6 +181,7 @@ jobs:
           echo "🔑 Retrieved hash for ${{ matrix.branch }}: $HASH"
 
       - name: 💾 恢复基础环境缓存
+        if: steps.check_skip.outputs.skip == 'false'
         uses: actions/cache@v4
         with:
           path: |
@@ -168,11 +192,13 @@ jobs:
           key: base-${{ matrix.branch }}-${{ steps.get_hash.outputs.hash }}
 
       - name: 🔨 编译固件
+        if: steps.check_skip.outputs.skip == 'false'
         run: |
           chmod +x scripts/*.sh
           ./scripts/build.sh build-firmware
 
       - name: 📤 上传构建产物
+        if: steps.check_skip.outputs.skip == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.branch }}-${{ matrix.config }}
