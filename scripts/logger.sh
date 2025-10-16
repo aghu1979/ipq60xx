@@ -19,7 +19,8 @@ readonly COLOR_WHITE='\033[1;37m'
 readonly COLOR_RESET='\033[0m'
 
 # 日志文件
-LOG_FILE="${LOG_DIR:-/tmp}/build-$(date +%Y%m%d).log"
+LOG_DIR="${LOG_DIR:-$(pwd)/logs}"
+LOG_FILE="${LOG_DIR}/build-$(date +%Y%m%d).log"
 
 # 初始化日志
 init_log() {
