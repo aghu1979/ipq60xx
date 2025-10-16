@@ -6,8 +6,6 @@ on:
     workflows: ["🔨 OpenWrt 固件编译系统"]
     types:
       - completed
-    # 只有在编译成功时才执行
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
   # 也支持手动触发，方便重新发布
   workflow_dispatch:
 
@@ -18,6 +16,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # 只有在编译成功时才执行
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
