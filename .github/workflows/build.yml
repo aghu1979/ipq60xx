@@ -22,8 +22,14 @@ on:
         options:
           - ''
           - Pro
-          - Max
-          - Ultra
+          - 清理工具链
+          - 清理Android SDK
+          清理.NET
+          清理Haskell
+          清理Docker镜像
+          保留空间
+          清理包缓存
+          清理临时文件
 
 env:
   UBUNTU_VERSION: 22.04
@@ -40,7 +46,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        branch: [openwrt, immwrt, libwrt]
+        branch: [openwrt, sbwml/actions/free-disk@main
+        config: [Pro, Max, Ultra]
     outputs:
       openwrt-hash: ${{ steps.set_hash.outputs.openwrt-hash }}
       immwrt-hash: ${{ steps.set_hash.outputs.immwrt-hash }}
@@ -70,24 +77,45 @@ jobs:
             ls -la scripts/
           else
             echo "❌ scripts目录不存在"
-            exit 1
+            continue
           fi
 
-      - name: 🧹 清理磁盘空间
-        uses: sbwml/actions@free-disk
+      - name: 🧹 清理磁盘空间 (sbwml/actions/free-disk)
+        uses: sbwml/actions/free-disk@main
+        with:
+          # 工具链大小 (MB)
+          toolchain-size: 1024
+          # Android SDK 大小 (MB)
+          android-size: 1024
+          # .NET 大小 (MB)
+          dotnet-size: 1024
+          # Haskell 大小 (MB)
+          haskell-size: 0
+          # swap大小 (MB)
+          swap-size: 1024
+          # 保留空间 (MB)
+          reserve-size: 5120
+          # 要删除的目录
+          delete-docker-images: true
+          # 删除包缓存
+          delete-package-cache: true
+          # 删除临时文件
+          delete-temporary-files: true
+          # 不删除未安装的包
+          remove-uninstalled-packages: false
 
       - name: 🌍 设置环境变量
         run: |
-          echo "REPO_SHORT=${{ matrix.branch }}" >> $GITHUB_ENV
-          echo "SOC_NAME=ipq60xx" >> $GITHUB_ENV
-          echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
+          echo "REPO_SHORT=${{ matrix.branch }}" >> $GITHUB.env
+          echo "SOC_NAME=ipq60xx" >> $GITHUB.env
+          echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB.env
           
           if [[ "${{ matrix.branch }}" == "openwrt" ]]; then
-            echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB_ENV
+            echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB.env
           elif [[ "${{ matrix.branch }}" == "immwrt" ]]; then
-            echo "REPO_URL=${{ env.REPO_IMMWRT }}" >> $GITHUB_ENV
+            echo "REPO_URL=${{ env.REPO_IMMWRT }}" >> $GITHUB.env
           else
-            echo "REPO_URL=${{ env.REPO_LIBWRT }}" >> $GITHUB_ENV
+            echo "REPO_URL=${{ env.REPO_LIBWRT }}" >> $GITHUB.env
           fi
 
       - name: 🔐 计算基础配置哈希
@@ -140,7 +168,7 @@ jobs:
           path: hashes.txt
 
   # ========================================
-  # 阶段二：在基础环境上编译最终固件
+  # 避段二：在基础环境上编译最终固件
   # ========================================
   build-firmware:
     needs: prepare-base-environments
@@ -149,33 +177,51 @@ jobs:
       fail-fast: false
       matrix:
         branch: [openwrt, immwrt, libwrt]
-        config: [Pro, Max, Ultra]
+        config: [Pro, max, ultra]
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      - name: 🧹 清理磁盘空间
-        uses: sbwml/actions@free-disk
+      - name: 🧹 清理磁盘空间 (sbwml/actions/free-disk)
+        uses: sbwml/actions/free-disk@main
+        with:
+          # 工具链大小 (MB)
+          toolchain-size: 1024
+          # Android SDK 大小 (MB)
+          android-size: 1024
+          # .NET 大小 (MB)
+          dotnet-size: 1024
+          # Haskell 大小 (MB)
+          haskell-size: 0
+          # swap大小 (MB)
+          swap-size: 1024
+          # 保留空间 (MB)
+          reserve-size: 5120
+          # 要删除的目录
+          delete-docker-images: true
+          # 删除包缓存
+          delete-package-cache: true
+          # 删除临时文件
+          delete-temporary-files: true
+          # 不删除未安装的包
+          remove-uninstalled-packages: false
 
-      - name: 🔍 检查是否需要跳过当前矩阵任务
+      - name: 🔍 检查是否需要跳过
         id: check_skip
         run: |
-          # 检查手动触发时的输入参数，决定是否跳过当前矩阵任务
           SKIP_BUILD=false
           
-          # 如果手动指定了分支，且不等于当前矩阵分支，则跳过
-          if [[ "${{ github.event.inputs.branch }}" != "" && "${{ github.event.inputs.branch }}" != "${{ matrix.branch }}" ]]; then
+          if [[ "${{ github.event.inputs.branch }}" != "" && "${{ github.event.inputs.branch }}" != "${{ matrix.branch}" ]]; then
             SKIP_BUILD=true
           fi
           
-          # 如果手动指定了配置，且不等于当前矩阵配置，则跳过
           if [[ "${{ github.event.inputs.config }}" != "" && "${{ github.event.inputs.config }}" != "${{ matrix.config }}" ]]; then
             SKIP_BUILD=true
           fi
           
           echo "skip=$SKIP_BUILD" >> $GITHUB_OUTPUT
           
-          if [[ "$SKIP_BUILD" == "true" ]]; then
+          if [[ "$SKIP_BUILD" == "true" then
             echo "⏭️ 跳过构建: ${{ matrix.branch }}-${{ matrix.config }}"
           else
             echo "🔨 开始构建: ${{ matrix.branch }}-${{ matrix.config }}"
@@ -184,17 +230,17 @@ jobs:
       - name: 🌍 设置环境变量
         if: steps.check_skip.outputs.skip == 'false'
         run: |
-          echo "REPO_SHORT=${{ matrix.branch }}" >> $GITHUB_ENV
-          echo "SOC_NAME=ipq60xx" >> $GITHUB_ENV
-          echo "CONFIG_LEVEL=${{ matrix.config }}" >> $GITHUB_ENV
-          echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
+          echo "REPO_SHORT=${{ matrix.branch }}" >> $GITHUB.env
+          echo "SOC_NAME=0"
+          echo "CONFIG_LEVEL=${{ matrix.config }}" >> $GITHUB.env
+          echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB.env
           
           if [[ "${{ matrix.branch }}" == "openwrt" ]]; then
-            echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB_ENV
+            echo "REPO_URL=${{ env.REPO_OPENWRT}" >> $GITHUB.env
           elif [[ "${{ matrix.branch }}" == "immwrt" ]]; then
-            echo "REPO_URL=${{ env.REPO_IMMWRT }}" >> $GITHUB_ENV
+            echo "REPO_URL=${{ env.REPO_IMMWRT}" >> $GITHUB.env
           else
-            echo "REPO_URL=${{ env.REPO_LIBWRT }}" >> $GITHUB_ENV
+            echo "REPO_URL=${{ env.REPO_ENV.REPO_LIBWRT}" >> $GITHUB.env
           fi
 
       - name: 📥 下载哈希文件
@@ -208,7 +254,6 @@ jobs:
         id: get_hash
         if: steps.check_skip.outputs.skip == 'false'
         run: |
-          # 从文件中读取对应分支的哈希值
           HASH=$(grep "^${{ matrix.branch }}=" hashes.txt | cut -d'=' -f2)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
           echo "🔑 Retrieved hash for ${{ matrix.branch }}: $HASH"
@@ -221,8 +266,7 @@ jobs:
             build/${{ matrix.branch }}/
             dl/
             feeds/
-          # 使用上一步读取的哈希值
-          key: base-${{ matrix.branch }}-${{ steps.get_hash.outputs.hash }}
+          key: base-${{ matrix.branch }}-${{ steps.get_hash.outputs.hash }
 
       - name: 🔨 编译固件
         if: steps.check_skip.outputs.skip == 'false'
@@ -234,7 +278,7 @@ jobs:
         if: always() && steps.check_skip.outputs.skip == 'false'
         run: |
           echo "=========================================="
-          echo "📊 系统资源使用情况"
+          echo "📊 硬件资源使用情况"
           echo "=========================================="
           df -h
           free -h
