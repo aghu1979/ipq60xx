@@ -52,16 +52,22 @@ jobs:
       - name: 🧹 清理磁盘空间
         uses: easimon/maximize-build-space@master
         with:
-          # 保留2GB空间
-          reserve-space: 2
+          # 根分区保留空间 (MB)
+          root-reserve-mb: 2048
+          # 临时目录保留空间 (MB)
+          temp-reserve-mb: 1024
+          # 交换空间大小 (MB)
+          swap-size-mb: 1024
           # 删除.NET
           remove-dotnet: 'true'
           # 删除Android SDK
           remove-android: 'true'
           # 删除Haskell
           remove-haskell: 'true'
-          # 删除其他大文件
-          remove-large-files: 'true'
+          # 删除CodeQL
+          remove-codeql: 'true'
+          # 删除Docker镜像
+          remove-docker-images: 'true'
 
       - name: 🌍 设置环境变量
         run: |
@@ -127,16 +133,22 @@ jobs:
       - name: 🧹 清理磁盘空间
         uses: easimon/maximize-build-space@master
         with:
-          # 保留2GB空间
-          reserve-space: 2
+          # 根分区保留空间 (MB)
+          root-reserve-mb: 2048
+          # 临时目录保留空间 (MB)
+          temp-reserve-mb: 1024
+          # 交换空间大小 (MB)
+          swap-size-mb: 1024
           # 删除.NET
           remove-dotnet: 'true'
           # 删除Android SDK
           remove-android: 'true'
           # 删除Haskell
           remove-haskell: 'true'
-          # 删除其他大文件
-          remove-large-files: 'true'
+          # 删除CodeQL
+          remove-codeql: 'true'
+          # 删除Docker镜像
+          remove-docker-images: 'true'
 
       - name: 🔍 检查是否需要跳过当前矩阵任务
         id: check_skip
