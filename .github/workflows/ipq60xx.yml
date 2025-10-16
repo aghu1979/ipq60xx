@@ -2,44 +2,33 @@ name: OpenWrt Multi-Branch Build
 
 on:
   schedule:
-    # 北京时间每周五0点（UTC时间周四16点）
+    # 北京时间每周五0点 (UTC时间周四16点)
     - cron: '0 16 * * 4'
   workflow_dispatch:
     inputs:
       branch_filter:
         description: '选择要编译的分支 (留空编译全部)'
         required: false
-        default: ''
+        default: 'all'
         type: choice
         options:
-          - ''
+          - all
           - openwrt
           - immwrt
           - libwrt
       config_filter:
         description: '选择配置类型 (留空编译全部)'
         required: false
-        default: ''
+        default: 'all'
         type: choice
         options:
-          - ''
+          - all
           - Pro
           - Max
           - Ultra
 
 env:
-  REPO_OPENWRT: https://github.com/laipeng668/openwrt.git
-  REPO_IMMWRT: https://github.com/laipeng668/immortalwrt.git
-  REPO_LIBWRT: https://github.com/laipeng668/openwrt-6.x.git
-  FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: .config
-  DIY_P1_SH: scripts/diy.sh
-  UPLOAD_BIN_DIR: ./upload
-  UPLOAD_FIRMWARE: true
-  UPLOAD_COWTRANSFER: false
-  UPLOAD_WETRANSFER: false
-  UPLOAD_RELEASE: true
-  TZ: Asia/Shanghai
+  # 图标定义 - 使用Unicode字符
   ICON_SUCCESS: "✅"
   ICON_ERROR: "❌"
   ICON_WARNING: "⚠️"
@@ -53,312 +42,334 @@ env:
   ICON_CACHE: "💾"
   ICON_BUILD: "🔨"
   ICON_CLEAN: "🧹"
+  # 基础环境变量
+  TZ: Asia/Shanghai
+  DIY_P1_SH: scripts/diy.sh
+  UPLOAD_BIN_DIR: ./upload
 
 jobs:
-  # 设置作业：准备环境并提取设备列表
+  # 作业1: 设置环境，提取设备信息，生成动态编译矩阵
   setup:
     runs-on: ubuntu-22.04
     outputs:
+      # 输出设备列表字符串，以空格分隔
       devices: ${{ steps.extract-devices.outputs.devices }}
-      matrix-include: ${{ steps.generate-matrix.outputs.matrix }}
-      kernel-version: ${{ steps.get-kernel.outputs.version }}
+      # 输出最终的编译矩阵，用于build作业
+      matrix: ${{ steps.generate-matrix.outputs.matrix }}
+      # 输出构建日期，用于Release Tag
       build-date: ${{ steps.get-date.outputs.date }}
     steps:
-      - name: ${{ env ICON_START }} 检出代码
+      - name: ${{ env.ICON_START }} 检出代码
         uses: actions/checkout@v4
 
-      - name: ${{ env ICON_CONFIG }} 提取设备列表
+      - name: ${{ env.ICON_CONFIG }} 提取设备列表
         id: extract-devices
         run: |
-          echo "🔍 正在提取设备列表..."
-          
-          # 从base_ipq60xx.config提取设备名
-          DEVICES=$(grep -oE 'CONFIG_TARGET_DEVICE_.*_DEVICE_[^=]+=y' configs/base_ipq60xx.config | \
-                   sed -E 's/CONFIG_TARGET_DEVICE_.*_DEVICE_([^=]+)=y/\1/' | \
-                   tr '\n' ' ')
-          
-          echo "📋 发现设备: $DEVICES"
+          echo -e "${ICON_PROGRESS} 正在从 configs/base_ipq60xx.config 提取设备列表..."
+          # 使用正则表达式提取设备名，并去重排序
+          DEVICES=$(grep -oE 'CONFIG_TARGET_DEVICE_.*_DEVICE_([^=]+)=y' configs/base_ipq60xx.config | sed -E 's/CONFIG_TARGET_DEVICE_.*_DEVICE_([^=]+)=y/\1/' | sort -u | tr '\n' ' ')
+          if [ -z "$DEVICES" ]; then
+            echo -e "${ICON_ERROR} 错误: 未能从 base_ipq60xx.config 中提取到任何设备名称。"
+            exit 1
+          fi
+          echo -e "${ICON_INFO} 发现设备: ${DEVICES}"
           echo "devices=$DEVICES" >> $GITHUB_OUTPUT
-          
-          # 保存到文件供后续作业使用
-          echo "$DEVICES" > devices.txt
 
-      - name: ${{ env ICON_CONFIG }} 生成编译矩阵
+      - name: ${{ env.ICON_CONFIG }} 生成动态编译矩阵
         id: generate-matrix
         run: |
-          # 读取设备列表
-          DEVICES=$(cat devices.txt)
+          # 从输入中获取用户选择的过滤条件
+          BRANCH_FILTER="${{ github.event.inputs.branch_filter || 'all' }}"
+          CONFIG_FILTER="${{ github.event.inputs.config_filter || 'all' }}"
           
-          # 定义分支配置
-          BRANCHES='[
-            {"name": "openwrt", "repo": "${{ env.REPO_OPENWRT }}", "branch": "master", "short": "openwrt"},
-            {"name": "immwrt", "repo": "${{ env.REPO_IMMWRT }}", "branch": "master", "short": "immwrt"},
-            {"name": "libwrt", "repo": "${{ env.REPO_LIBWRT }}", "branch": "k6.12-nss", "short": "libwrt"}
+          # 定义所有分支
+          ALL_BRANCHES='[
+            {"name": "openwrt", "repo": "https://github.com/laipeng668/openwrt.git", "branch": "master", "short": "openwrt"},
+            {"name": "immwrt", "repo": "https://github.com/laipeng668/immortalwrt.git", "branch": "master", "short": "immwrt"},
+            {"name": "libwrt", "repo": "https://github.com/laipeng668/openwrt-6.x.git", "branch": "k6.12-nss", "short": "libwrt"}
           ]'
           
-          # 定义配置类型
-          CONFIGS='["Pro", "Max", "Ultra"]'
+          # 定义所有配置
+          ALL_CONFIGS='["Pro", "Max", "Ultra"]'
           
-          # 生成矩阵
+          # 使用jq进行过滤，生成最终的矩阵
           MATRIX=$(jq -n \
-            --argjson branches "$BRANCHES" \
-            --argjson configs "$CONFIGS" \
-            --arg devices "$DEVICES" \
+            --argjson branches "$ALL_BRANCHES" \
+            --argjson configs "$ALL_CONFIGS" \
+            --arg branch_filter "$BRANCH_FILTER" \
+            --arg config_filter "$CONFIG_FILTER" \
+            --arg devices "${{ steps.extract-devices.outputs.devices }}" \
             '{
-              branch: $branches,
-              config: $configs,
-              device: ($devices | split(" ") | map(select(length > 0)))
+              include: [
+                $branches[] | select($branch_filter == "all" or .short == $branch_filter) as $branch |
+                $configs[] | select($config_filter == "all" or . == $config_filter) as $config |
+                ($devices | split(" ") | map(select(length > 0)))[] as $device |
+                {branch: $branch, config: $config, device: $device}
+              ]
             }')
           
+          echo -e "${ICON_INFO} 生成的编译矩阵:"
+          echo "$MATRIX" | jq '.'
           echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
-          echo "📊 编译矩阵生成完成"
 
-      - name: ${{ env ICON_INFO }} 获取内核版本
-        id: get-kernel
-        run: |
-          # 这里需要从源码获取，暂时使用默认值
-          echo "version=6.6.50" >> $GITHUB_OUTPUT
-
-      - name: ${{ env ICON_INFO }} 获取构建日期
+      - name: ${{ env.ICON_INFO }} 获取构建日期
         id: get-date
         run: |
           echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
 
-  # 构建作业：使用矩阵策略并行编译
+  # 作业2: 并行编译固件
   build:
     needs: setup
     runs-on: ubuntu-22.04
+    # 使用动态生成的矩阵
     strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJson(needs.setup.outputs.matrix-include) }}
-        # 如果用户指定了过滤条件，则应用过滤
-        ${{ if github.event.inputs.branch_filter }}
-        branch:
-          - ${{ github.event.inputs.branch_filter }}
-        ${{ if github.event.inputs.config_filter }}
-        config:
-          - ${{ github.event.inputs.config_filter }}
+      fail-fast: false # 允许其他任务继续，即使某个失败
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
     
     steps:
-      - name: ${{ env ICON_START }} 检出代码
+      - name: ${{ env.ICON_START }} 检出代码
         uses: actions/checkout@v4
 
-      - name: ${{ env ICON_CACHE }} 缓存源码
+      - name: ${{ env.ICON_CACHE }} 缓存源码
         uses: actions/cache@v3
         id: cache-source
         with:
           path: openwrt
-          key: ${{ matrix.branch.short }}-${{ matrix.branch.branch }}-${{ hashFiles('**/clone.sh') }}
+          # 缓存键基于分支、仓库和当前工作流的提交哈希
+          key: ${{ matrix.branch.short }}-source-${{ hashFiles(format('{0}/{1}', github.workspace, '.github/workflows/build.yml')) }}
           restore-keys: |
-            ${{ matrix.branch.short }}-${{ matrix.branch.branch }}-
+            ${{ matrix.branch.short }}-source-
 
-      - name: ${{ env ICON_PACKAGE }} 克隆源码
+      - name: ${{ env.ICON_PACKAGE }} 克隆源码
         if: steps.cache-source.outputs.cache-hit != 'true'
         run: |
-          echo "📥 克隆 ${{ matrix.branch.name }} 源码..."
+          echo -e "${ICON_PROGRESS} 克隆 ${{ matrix.branch.name }} 源码..."
           git clone ${{ matrix.branch.repo }} -b ${{ matrix.branch.branch }} openwrt
           cd openwrt
-          
-          # 记录版本信息
           echo "源码版本: $(git rev-parse --short HEAD)" > ../source_info.txt
           echo "分支: ${{ matrix.branch.branch }}" >> ../source_info.txt
+          echo -e "${ICON_SUCCESS} 源码克隆完成"
 
-      - name: ${{ env ICON_CONFIG }} 合并配置文件
+      - name: ${{ env.ICON_CACHE }} 缓存工具链和Feeds
+        uses: actions/cache@v3
+        id: cache-tools
+        with:
+          path: |
+            openwrt/staging_dir
+            openwrt/build_dir
+            openwrt/feeds
+          # 缓存键基于配置文件和feeds配置文件的哈希
+          key: ${{ matrix.branch.short }}-tools-${{ hashFiles('configs/base_ipq60xx.config', 'configs/base_*.config', 'configs/*.config') }}-${{ hashFiles('openwrt/feeds.conf.default') }}
+          restore-keys: |
+            ${{ matrix.branch.short }}-tools-
+
+      - name: ${{ env.ICON_CONFIG }} 合并配置文件
         run: |
-          echo "⚙️ 开始合并配置文件..."
+          echo -e "${ICON_PROGRESS} 开始为 ${{ matrix.branch.short }}-${{ matrix.device }}-${{ matrix.config }} 合并配置文件..."
           
-          # 创建临时目录
+          # 创建临时目录存放合并后的配置
           mkdir -p temp_config
           
-          # 按优先级合并配置（最后的最优先）
-          cat configs/base_ipq60xx.config > temp_config/base.config
-          cat configs/base_${{ matrix.branch.short }}.config >> temp_config/base.config
-          cat configs/${{ matrix.config }}.config >> temp_config/base.config
+          # 按优先级合并配置（最后的优先级最高）
+          cat configs/base_ipq60xx.config > temp_config/merged.config
+          cat configs/base_${{ matrix.branch.short }}.config >> temp_config/merged.config
+          cat configs/${{ matrix.config }}.config >> temp_config/merged.config
           
-          # 提取当前设备的配置
-          DEVICE_CONFIG=$(grep -E "CONFIG_TARGET_DEVICE.*_${{ matrix.device }}=y" temp_config/base.config || true)
-          if [ -z "$DEVICE_CONFIG" ]; then
-            echo "❌ 错误: 设备 ${{ matrix.device }} 在配置中未找到"
+          # 提取当前设备的配置行
+          DEVICE_CONFIG_LINE=$(grep -E "CONFIG_TARGET_DEVICE.*_${{ matrix.device }}=y" temp_config/merged.config || true)
+          if [ -z "$DEVICE_CONFIG_LINE" ]; then
+            echo -e "${ICON_ERROR} 错误: 设备 '${{ matrix.device }}' 在合并后的配置中未找到。请检查配置文件。"
             exit 1
           fi
           
-          # 生成最终配置
-          echo "CONFIG_TARGET_${{ matrix.branch.short }}=y" > openwrt/.config
-          echo "CONFIG_TARGET_${{ matrix.branch.short }}_ipq60xx=y" >> openwrt/.config
-          echo "CONFIG_TARGET_MULTI_PROFILE=y" >> openwrt/.config
-          echo "$DEVICE_CONFIG" >> openwrt/.config
+          # 生成最终的 .config 文件
+          cat > openwrt/.config << EOF
+          CONFIG_TARGET_${{ matrix.branch.short }}=y
+          CONFIG_TARGET_${{ matrix.branch.short }}_ipq60xx=y
+          CONFIG_TARGET_MULTI_PROFILE=y
+          $DEVICE_CONFIG_LINE
+          EOF
           
-          # 添加其他配置
-          grep -vE "CONFIG_TARGET_DEVICE" temp_config/base.config >> openwrt/.config
+          # 添加其他非设备特定的配置
+          grep -vE "CONFIG_TARGET_DEVICE" temp_config/merged.config >> openwrt/.config
           
-          # 格式化配置文件
+          # 格式化并去重
           sort -u openwrt/.config -o openwrt/.config
           
-          echo "✅ 配置文件合并完成"
+          echo -e "${ICON_SUCCESS} 配置文件合并完成: openwrt/.config"
 
-      - name: ${{ env ICON_DEBUG }} 验证配置差异
+      - name: ${{ env.ICON_DEBUG }} 验证配置差异
         run: |
-          echo "🔍 验证配置合并差异..."
+          echo -e "${ICON_DEBUG} 验证配置合并差异..."
           
-          # 提取合并前的软件包
-          BEFORE_PACKAGES=$(grep -oE "CONFIG_PACKAGE_luci-app-[^=]+=y" configs/base_ipq60xx.config configs/base_${{ matrix.branch.short }}.config configs/${{ matrix.config }}.config | sort -u)
+          # 提取合并前的luci-app软件包
+          BEFORE_PACKAGES=$(grep -h "CONFIG_PACKAGE_luci-app-.*=y" configs/base_ipq60xx.config configs/base_${{ matrix.branch.short }}.config configs/${{ matrix.config }}.config | sort -u)
           
-          # 提取合并后的软件包
-          AFTER_PACKAGES=$(grep -oE "CONFIG_PACKAGE_luci-app-[^=]+=y" openwrt/.config | sort -u)
+          # 提取合并后的luci-app软件包
+          AFTER_PACKAGES=$(grep "CONFIG_PACKAGE_luci-app-.*=y" openwrt/.config | sort -u)
           
           # 比较差异
           if [ "$BEFORE_PACKAGES" != "$AFTER_PACKAGES" ]; then
-            echo "⚠️ 发现配置差异:"
-            diff <(echo "$BEFORE_PACKAGES") <(echo "$AFTER_PACKAGES") || true
+            echo -e "${ICON_WARNING} 发现配置差异 (合并前 vs 合并后):"
+            diff --unified=0 --label="合并前" --label="合并后" <(echo "$BEFORE_PACKAGES") <(echo "$AFTER_PACKAGES") || true
           else
-            echo "✅ 配置合并验证通过"
+            echo -e "${ICON_SUCCESS} 配置合并验证通过，无差异。"
           fi
 
-      - name: ${{ env ICON_PACKAGE }} 更新feeds
+      - name: ${{ env.ICON_PACKAGE }} 更新和安装Feeds
+        if: steps.cache-tools.outputs.cache-hit != 'true'
         run: |
           cd openwrt
-          echo "📦 更新feeds..."
+          echo -e "${ICON_PROGRESS} 更新 feeds..."
           ./scripts/feeds update -a
+          echo -e "${ICON_PROGRESS} 安装 feeds..."
           ./scripts/feeds install -a
+          echo -e "${ICON_SUCCESS} Feeds 处理完成"
 
-      - name: ${{ env ICON_BUILD }} 执行DIY脚本
+      - name: ${{ env.ICON_BUILD }} 执行DIY脚本
         run: |
           cd openwrt
           chmod +x ../${{ env.DIY_P1_SH }}
+          echo -e "${ICON_PROGRESS} 执行 DIY 脚本..."
           ../${{ env.DIY_P1_SH }} ${{ matrix.branch.short }} ipq60xx
+          echo -e "${ICON_SUCCESS} DIY 脚本执行完成"
 
-      - name: ${{ env ICON_BUILD }} 下载工具链
+      - name: ${{ env.ICON_BUILD }} 下载工具链和依赖
         run: |
           cd openwrt
+          echo -e "${ICON_PROGRESS} 加载配置..."
           make defconfig
-          make download -j8
+          echo -e "${ICON_PROGRESS} 下载所有依赖..."
+          make download -j$(nproc)
+          # 清理下载失败的空文件
           find dl -size -1024c -exec ls -l {} \;
           find dl -size -1024c -exec rm -f {} \;
+          echo -e "${ICON_SUCCESS} 依赖下载完成"
 
-      - name: ${{ env ICON_BUILD }} 编译固件
+      - name: ${{ env.ICON_BUILD }} 编译固件
         id: compile
         run: |
           cd openwrt
-          echo -e "$(nproc) thread compile"
-          make -j$(nproc) || make -j1 || make -j1 V=s
-          
-          # 记录编译结果
-          echo "compile_success=true" >> $GITHUB_OUTPUT
+          echo -e "${ICON_BUILD} 开始编译固件 (使用 $(nproc) 个线程)..."
+          # 首次尝试多线程编译，失败后降级为单线程详细编译
+          make -j$(nproc) || make -j1 V=s
+          echo -e "${ICON_SUCCESS} 固件编译完成"
           
           # 获取内核版本
-          KERNEL_VERSION=$(grep "CONFIG_LINUX_VERSION" .config | cut -d'"' -f2)
+          KERNEL_VERSION=$(grep "CONFIG_LINUX_VERSION=" .config | cut -d'"' -f2)
           echo "kernel_version=$KERNEL_VERSION" >> $GITHUB_OUTPUT
 
-      - name: ${{ env ICON_PACKAGE }} 整理产出物
+      - name: ${{ env.ICON_PACKAGE }} 整理产出物
+        id: organize
         run: |
-          echo "📦 整理产出物..."
+          echo -e "${ICON_PROGRESS} 整理产出物..."
           
-          # 创建临时目录
-          TEMP_DIR="${{ matrix.branch.short }}-${{ matrix.device }}-${{ matrix.config }}"
-          mkdir -p $TEMP_DIR
+          # 为当前构建创建唯一的临时目录
+          TEMP_BUILD_DIR="build_artifacts/${{ matrix.branch.short }}-${{ matrix.device }}-${{ matrix.config }}"
+          mkdir -p "$TEMP_BUILD_DIR"
           
-          # 复制固件文件
-          find openwrt/bin/targets/ -name "*${{ matrix.device }}*squashfs*" -type f | while read file; do
-            if [[ $file == *factory.bin || $file == *sysupgrade.bin ]]; then
-              # 提取文件类型
+          # 复制并重命名固件文件
+          find openwrt/bin/targets/ -name "*${{ matrix.device }}*squashfs*" -type f | while read -r file; do
+            if [[ "$file" == *factory.bin || "$file" == *sysupgrade.bin ]]; then
               FILE_TYPE=$(basename "$file" | grep -oE "(factory|sysupgrade)")
-              
-              # 重命名
               NEW_NAME="${{ matrix.branch.short }}-${{ matrix.device }}-${FILE_TYPE}-${{ matrix.config }}.bin"
-              cp "$file" "$TEMP_DIR/$NEW_NAME"
-              echo "📄 复制固件: $NEW_NAME"
+              cp "$file" "$TEMP_BUILD_DIR/$NEW_NAME"
+              echo -e "${ICON_PACKAGE} 固件: $NEW_NAME"
             fi
           done
           
-          # 复制配置文件
-          cp openwrt/.config "$TEMP_DIR/${{ matrix.branch.short }}-${{ matrix.device }}-${{ matrix.config }}.config"
-          cp openwrt/bin/targets/*/manifest "$TEMP_DIR/${{ matrix.branch.short }}-${{ matrix.device }}-${{ matrix.config }}.manifest" 2>/dev/null || true
-          cp openwrt/config.buildinfo "$TEMP_DIR/${{ matrix.branch.short }}-${{ matrix.device }}-${{ matrix.config }}.config.buildinfo" 2>/dev/null || true
+          # 复制配置和清单文件
+          cp openwrt/.config "$TEMP_BUILD_DIR/${{ matrix.branch.short }}-${{ matrix.device }}-${{ matrix.config }}.config"
+          cp openwrt/bin/targets/*/manifest "$TEMP_BUILD_DIR/${{ matrix.branch.short }}-${{ matrix.device }}-${{ matrix.config }}.manifest" 2>/dev/null || echo -e "${ICON_WARNING} manifest 文件未找到"
+          cp openwrt/config.buildinfo "$TEMP_BUILD_DIR/${{ matrix.branch.short }}-${{ matrix.device }}-${{ matrix.config }}.config.buildinfo" 2>/dev/null || echo -e "${ICON_WARNING} config.buildinfo 文件未找到"
           
-          # 复制软件包
-          mkdir -p packages_temp
-          find openwrt/bin/packages/ -name "*.ipk" -exec cp {} packages_temp/ \; 2>/dev/null || true
+          # 收集所有IPK包
+          mkdir -p "packages_temp/${{ matrix.branch.short }}"
+          find openwrt/bin/packages/ -name "*.ipk" -exec cp {} "packages_temp/${{ matrix.branch.short }}/" \; 2>/dev/null || true
           
-          # 保存临时目录供后续作业使用
-          echo "temp_dir=$TEMP_DIR" >> $GITHUB_OUTPUT
+          echo "temp_dir=$TEMP_BUILD_DIR" >> $GITHUB_OUTPUT
+          echo -e "${ICON_SUCCESS} 产出物整理完成"
 
-      - name: ${{ env ICON_CACHE }} 上传构建产物
+      - name: ${{ env.ICON_CACHE }} 上传构建产物 (临时)
         uses: actions/upload-artifact@v3
         with:
           name: build-${{ matrix.branch.short }}-${{ matrix.device }}-${{ matrix.config }}
-          path: ${{ steps.compile.outputs.temp_dir }}
+          path: ${{ steps.organize.outputs.temp_dir }}
           retention-days: 7
 
-  # 发布作业：整理所有产物并发布
+  # 作业3: 整理所有产物并发布Release
   release:
     needs: [setup, build]
     runs-on: ubuntu-22.04
-    if: always() && needs.build.result == 'success'
+    if: always() && needs.build.result == 'success' # 只有当所有build作业成功时才运行
     steps:
-      - name: ${{ env ICON_START }} 检出代码
+      - name: ${{ env.ICON_START }} 检出代码
         uses: actions/checkout@v4
 
-      - name: ${{ env ICON_PACKAGE }} 下载所有构建产物
+      - name: ${{ env.ICON_PACKAGE }} 下载所有构建产物
         uses: actions/download-artifact@v3
         with:
           path: all_builds
 
-      - name: ${{ env ICON_PACKAGE }} 整理发布包
+      - name: ${{ env.ICON_PACKAGE }} 整理发布包
         run: |
-          echo "📦 整理发布包..."
+          echo -e "${ICON_PROGRESS} 整理最终发布包..."
           
-          # 创建发布目录
+          # 创建发布目录结构
           RELEASE_DIR="release_${{ needs.setup.outputs.build-date }}"
-          mkdir -p $RELEASE_DIR/{firmware,config,logs,packages}
+          mkdir -p "$RELEASE_DIR"/{firmware,config,logs,packages}
           
-          # 整理固件
-          find all_builds -name "*.bin" -type f -exec cp {} $RELEASE_DIR/firmware/ \;
+          # 1. 整理固件
+          find all_builds -name "*.bin" -type f -exec cp {} "$RELEASE_DIR/firmware/" \;
           
-          # 整理配置文件
-          find all_builds -name "*.config" -o -name "*.manifest" -o -name "*.config.buildinfo" | while read file; do
-            cp "$file" $RELEASE_DIR/config/
+          # 2. 整理配置文件
+          find all_builds -name "*.config" -o -name "*.manifest" -o -name "*.config.buildinfo" | while read -r file; do
+            cp "$file" "$RELEASE_DIR/config/"
           done
-          
           # 打包配置文件
-          cd $RELEASE_DIR/config
-          tar -czf ../ipq60xx-config.tar.gz *
+          cd "$RELEASE_DIR/config"
+          tar -czf "../ipq60xx-config.tar.gz" *
           cd - > /dev/null
           
-          # 整理软件包
-          find all_builds -name "*.ipk" -type f -exec cp {} $RELEASE_DIR/packages/ \;
-          cd $RELEASE_DIR/packages
-          tar -czf ../ipq60xx-app.tar.gz *
+          # 3. 整理软件包 (允许覆盖)
+          find all_builds -name "*.ipk" -type f -exec cp {} "$RELEASE_DIR/packages/" \;
+          cd "$RELEASE_DIR/packages"
+          tar -czf "../ipq60xx-app.tar.gz" *
           cd - > /dev/null
           
-          # 创建发布说明
-          cat > $RELEASE_DIR/README.md << EOF
-          # OpenWrt 固件发布
+          # 4. 创建发布说明
+          cat > "$RELEASE_DIR/README.md" << EOF
+          # OpenWrt 固件发布 - ${{ needs.setup.outputs.build-date }}
           
-          ## 基本信息
-          - 默认管理地址: 192.168.111.1
-          - 默认用户: root
-          - 默认密码: none
-          - 默认WIFI密码: 12345678
+          ## 📌 基本信息
+          - **默认管理地址**: \`192.168.111.1\`
+          - **默认用户**: \`root\`
+          - **默认密码**: \`none\` (留空)
+          - **默认WIFI密码**: \`12345678\`
           
-          ## 固件信息
-          - 编译分支: openwrt, immwrt, libwrt
-          - 支持设备: ${{ needs.setup.outputs.devices }}
-          - 配置类型: Pro, Max, Ultra
-          - 内核版本: ${{ needs.setup.outputs.kernel-version }}
-          - 作者: Mary
-          - 发布时间: ${{ needs.setup.outputs.build-date }}
+          ## 📦 固件信息
+          - **编译分支**: openwrt, immwrt, libwrt
+          - **支持设备**: ${{ needs.setup.outputs.devices }}
+          - **配置类型**: Pro, Max, Ultra
+          - **内核版本**: 从固件中获取
+          - **作者**: Mary
+          - **发布时间**: ${{ needs.setup.outputs.build-date }}
           
-          ## 文件说明
-          - firmware/: 各设备固件文件
-          - ipq60xx-config.tar.gz: 配置文件包
-          - ipq60xx-app.tar.gz: 软件包
+          ## 📂 文件说明
+          - \`firmware/\`: 各设备各配置的固件文件
+          - \`ipq60xx-config.tar.gz\`: 所有设备的配置、清单和构建信息压缩包
+          - \`ipq60xx-app.tar.gz\`: 本次编译包含的所有第三方软件包
           
-          ## 命名规则
-          固件文件命名: 分支缩写-设备名称-类型(factory/sysupgrade)-配置(Pro/Max/Ultra).bin
+          ## 🏷️ 固件命名规则
+          \`分支缩写-设备名称-类型(factory/sysupgrade)-配置(Pro/Max/Ultra).bin\`
+          
+          ---
+          _由 GitHub Actions 自动构建_
           EOF
+          
+          echo -e "${ICON_SUCCESS} 发布包整理完成"
 
-      - name: ${{ env ICON_PACKAGE }} 创建发布
+      - name: ${{ env.ICON_PACKAGE }} 创建GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ipq60xx-${{ needs.setup.outputs.build-date }}
@@ -372,11 +383,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: ${{ env ICON_SUCCESS }} 编译完成通知
+      - name: ${{ env.ICON_SUCCESS }} 编译完成通知
         run: |
-          echo "✅ 所有固件编译完成！"
-          echo "📊 编译统计:"
-          echo "  - 分支: openwrt, immwrt, libwrt"
-          echo "  - 设备: ${{ needs.setup.outputs.devices }}"
-          echo "  - 配置: Pro, Max, Ultra"
-          echo "  - 发布标签: ipq60xx-${{ needs.setup.outputs.build-date }}"
+          echo -e "${ICON_SUCCESS} ${ICON_SUCCESS} ${ICON_SUCCESS}"
+          echo -e "所有固件编译并发布成功！"
+          echo -e "${ICON_INFO} 发布标签: ipq60xx-${{ needs.setup.outputs.build-date }}"
+          echo -e "${ICON_INFO} 请访问 Releases 页面下载。"
