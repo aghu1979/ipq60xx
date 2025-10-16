@@ -1,6 +1,10 @@
 #!/bin/bash
-# scripts/diy.sh
+# =============================================================================
 # OpenWrt 定制脚本：用于修改默认设置、清理官方源、并克隆第三方软件包
+# 
+# 使用方法:
+#   ./scripts/diy.sh <branch_name> <soc_name>
+# =============================================================================
 
 # 启用严格模式：遇到错误立即退出，未定义的变量视为错误，管道中任一命令失败则整个管道失败
 set -euo pipefail
@@ -59,9 +63,13 @@ main() {
     local branch_name="${1:-openwrt}"
     local soc_name="${2:-ipq60xx}"
 
+    # 创建日志目录
+    mkdir -p logs
+    
     # 将所有输出同时打印到控制台和日志文件
-    exec > >(tee -a build.log)
-    exec 2> >(tee -a build.log >&2)
+    local log_file="logs/diy-${branch_name}-${soc_name}.log"
+    exec > >(tee -a "$log_file")
+    exec 2> >(tee -a "$log_file" >&2)
 
     log_info "=========================================="
     log_info " DIY Script for OpenWrt"
@@ -208,14 +216,32 @@ clone_custom_packages() {
         local url="$1"
         local dest="$2"
         local name="$3"
-        log_info "  - 克隆 $name..."
+        log_info "  - 克隆 $name 到 $dest..."
+        
+        # 如果目标目录已存在，先删除
+        if [ -d "$dest" ]; then
+            log_info "    - 目录 $dest 已存在，先删除"
+            rm -rf "$dest"
+        fi
+        
+        # 克隆仓库
         if git clone --depth=1 "$url" "$dest"; then
             log_success "    - $name 克隆成功"
+            
+            # 验证是否包含 Makefile（OpenWrt 软件包的标志）
+            if [ -f "$dest/Makefile" ]; then
+                log_info "    - 找到 Makefile，是有效的 OpenWrt 软件包"
+            else
+                log_warning "    - 警告：未找到 Makefile，可能不是标准的 OpenWrt 软件包"
+            fi
         else
-            log_warning "    - $name 克隆失败，将使用官方源 (如果存在)"
+            log_error "    - $name 克隆失败！"
+            return 1
         fi
     }
 
+    log_info "开始克隆第三方软件包..."
+    
     # laipeng668定制包
     clone_repo "https://github.com/sbwml/packages_lang_golang" "feeds/packages/lang/golang" "Golang"
     clone_repo "https://github.com/sbwml/luci-app-openlist2" "package/openlist" "luci-app-openlist2"
@@ -239,6 +265,7 @@ clone_custom_packages() {
     clone_repo "https://github.com/nikkinikki-org/OpenWrt-momo.git" "package/momo" "Momo"
     clone_repo "https://github.com/nikkinikki-org/OpenWrt-nikki.git" "package/nikki" "Nikki"
     clone_repo "https://github.com/vernesong/OpenClash.git" "package/openclash" "OpenClash"
+    clone_repo "https://github.com/VIKINGYFY/packages.git" "package/wolplus" "luci-app-wolplus"  # WolPlus 的处理
 
     # kenzok8软件源（该软件源仅作为查漏补缺，优先级最低）
     clone_repo "https://github.com/kenzok8/small-package" "smpackage" "kenzok8 small-package"
@@ -249,6 +276,8 @@ clone_custom_packages() {
         chmod +x package/luci-app-athena-led/root/usr/sbin/athena-led
         log_info "  - 已设置 athena-led 脚本执行权限"
     fi
+    
+    log_success "所有第三方软件包克隆完成"
 }
 
 # --- 执行主函数 ---
