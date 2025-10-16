@@ -30,6 +30,8 @@ env:
   REPO_OPENWRT: https://github.com/openwrt/openwrt.git
   REPO_IMMWRT: https://github.com/immortalwrt/immortalwrt.git
   REPO_LIBWRT: https://github.com/openwrt/openwrt.git
+  # 设置工作目录环境变量
+  WORKSPACE_ROOT: ${{ github.workspace }}
 
 jobs:
   # ========================================
@@ -51,22 +53,26 @@ jobs:
 
       - name: 📁 验证目录结构
         run: |
-          echo "🔍 当前目录结构："
+          echo "🔍 当前工作目录: $(pwd)"
+          echo "🔍 GITHUB_WORKSPACE: ${{ github.workspace }}"
+          echo "🔍 WORKSPACE_ROOT: ${{ env.WORKSPACE_ROOT }}"
+          echo ""
+          echo "📁 根目录结构："
           ls -la
           echo ""
           echo "📁 configs目录内容："
           if [ -d "configs" ]; then
             ls -la configs/
-            echo ""
-            echo "📁 scripts目录内容："
-            if [ -d "scripts" ]; then
-              ls -la scripts/
-            else
-              echo "❌ scripts目录不存在"
-              exit 1
-            fi
           else
             echo "❌ configs目录不存在"
+            exit 1
+          fi
+          echo ""
+          echo "📁 scripts目录内容："
+          if [ -d "scripts" ]; then
+            ls -la scripts/
+          else
+            echo "❌ scripts目录不存在"
             exit 1
           fi
 
@@ -90,6 +96,12 @@ jobs:
           # 删除Docker镜像
           remove-docker-images: 'true'
 
+      - name: 🔄 切换到工作目录
+        run: |
+          echo "🔄 切换到工作目录: ${{ env.WORKSPACE_ROOT }}"
+          cd "${{ env.WORKSPACE_ROOT }}"
+          echo "📍 当前工作目录: $(pwd)"
+
       - name: 🌍 设置环境变量
         run: |
           echo "REPO_SHORT=${{ matrix.branch }}" >> $GITHUB_ENV
@@ -107,7 +119,8 @@ jobs:
       - name: 🔐 计算基础配置哈希
         id: calc_hash
         run: |
-          # 显示当前工作目录
+          # 确保在正确的工作目录
+          cd "${{ env.WORKSPACE_ROOT }}"
           echo "📍 当前工作目录: $(pwd)"
           
           # 检查配置文件是否存在
@@ -127,15 +140,15 @@ jobs:
           # 计算哈希值
           HASH=$(sha256sum configs/base_${SOC_NAME}.config configs/base_${REPO_SHORT}.config | sha256sum | cut -d' ' -f1)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
-          echo "${{ matrix.branch }}=${{ steps.calc_hash.outputs.hash }}" >> ${{ github.workspace }}/hashes.txt
+          echo "${{ matrix.branch }}=${{ steps.calc_hash.outputs.hash }}" >> ${{ env.WORKSPACE_ROOT }}/hashes.txt
 
       - name: 💾 缓存基础环境
         uses: actions/cache@v4
         with:
           path: |
-            build/${{ matrix.branch }}/
-            dl/
-            feeds/
+            ${{ env.WORKSPACE_ROOT }}/build/${{ matrix.branch }}/
+            ${{ env.WORKSPACE_ROOT }}/dl/
+            ${{ env.WORKSPACE_ROOT }}/feeds/
           key: base-${{ matrix.branch }}-${{ steps.calc_hash.outputs.hash }}
           restore-keys: |
             base-${{ matrix.branch }}-
@@ -143,6 +156,8 @@ jobs:
       - name: 🚀 准备基础环境
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
+          # 确保在正确的工作目录
+          cd "${{ env.WORKSPACE_ROOT }}"
           echo "📦 为 ${{ matrix.branch }} 准备基础环境..."
           chmod +x scripts/*.sh
           ./scripts/build.sh prepare-base
@@ -152,7 +167,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hashes-file
-          path: ${{ github.workspace }}/hashes.txt
+          path: ${{ env.WORKSPACE_ROOT }}/hashes.txt
 
   # ========================================
   # 阶段二：在基础环境上编译最终固件
@@ -213,6 +228,13 @@ jobs:
             echo "🔨 开始构建: ${{ matrix.branch }}-${{ matrix.config }}"
           fi
 
+      - name: 🔄 切换到工作目录
+        if: steps.check_skip.outputs.skip == 'false'
+        run: |
+          echo "🔄 切换到工作目录: ${{ env.WORKSPACE_ROOT }}"
+          cd "${{ env.WORKSPACE_ROOT }}"
+          echo "📍 当前工作目录: $(pwd)"
+
       - name: 🌍 设置环境变量
         if: steps.check_skip.outputs.skip == 'false'
         run: |
@@ -234,12 +256,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: hashes-file
-          path: ${{ github.workspace }}
+          path: ${{ env.WORKSPACE_ROOT }}
 
       - name: 🔍 读取对应分支的哈希值
         id: get_hash
         if: steps.check_skip.outputs.skip == 'false'
         run: |
+          # 确保在正确的工作目录
+          cd "${{ env.WORKSPACE_ROOT }}"
           # 从文件中读取对应分支的哈希值
           HASH=$(grep "^${{ matrix.branch }}=" hashes.txt | cut -d'=' -f2)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
@@ -250,15 +274,17 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            build/${{ matrix.branch }}/
-            dl/
-            feeds/
+            ${{ env.WORKSPACE_ROOT }}/build/${{ matrix.branch }}/
+            ${{ env.WORKSPACE_ROOT }}/dl/
+            ${{ env.WORKSPACE_ROOT }}/feeds/
           # 使用上一步读取的哈希值
           key: base-${{ matrix.branch }}-${{ steps.get_hash.outputs.hash }}
 
       - name: 🔨 编译固件
         if: steps.check_skip.outputs.skip == 'false'
         run: |
+          # 确保在正确的工作目录
+          cd "${{ env.WORKSPACE_ROOT }}"
           chmod +x scripts/*.sh
           ./scripts/build.sh build-firmware
 
@@ -278,6 +304,6 @@ jobs:
         with:
           name: firmware-${{ matrix.branch }}-${{ matrix.config }}
           path: |
-            output/
-            logs/
+            ${{ env.WORKSPACE_ROOT }}/output/
+            ${{ env.WORKSPACE_ROOT }}/logs/
           retention-days: 7
