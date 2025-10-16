@@ -191,9 +191,11 @@ main() {
 #   1. 克隆源码
 #   2. 更新和安装Feeds
 #   3. 安装第三方软件包
-#   4. 合并基础配置文件
-#   5. 应用基础配置
-#   6. 预下载依赖
+#   4. 重新安装Feeds以识别第三方包
+#   5. 验证软件包可用性
+#   6. 合并基础配置文件
+#   7. 应用基础配置
+#   8. 预下载依赖
 prepare_base_environment() {
     log_info "🚀 [阶段一] 开始为分支 ${REPO_SHORT} 准备基础环境..."
     
@@ -224,8 +226,8 @@ prepare_base_environment() {
     
     print_step_result "软件源更新完成"
     
-    # 步骤2：安装Feeds
-    print_step_title "步骤2：安装软件源"
+    # 步骤2：安装基础Feeds
+    print_step_title "步骤2：安装基础软件源"
     safe_execute "feeds-install" ./scripts/feeds install -a
     
     # 输出feeds安装摘要
@@ -237,7 +239,7 @@ prepare_base_environment() {
     
     print_step_result "软件源安装完成"
     
-    # 步骤3：应用自定义脚本（安装第三方软件包）
+    # 步骤3：应用自定义脚本（安装第三方软件包）- 关键步骤！
     print_step_title "步骤3：安装第三方软件包"
     log_info "🛠️ 应用自定义脚本安装第三方软件包..."
     
@@ -262,26 +264,67 @@ prepare_base_environment() {
         echo -e "\n${COLOR_BLUE}📋 DIY脚本执行摘要：${COLOR_RESET}"
         echo -e "${COLOR_CYAN}详细日志：${diy_log}${COLOR_RESET}"
         
-        print_step_result "第三方软件包安装完成"
+        print_step_result "第三方软件包源码下载完成"
     else
         echo -e "\n${COLOR_YELLOW}⚠️ 未找到自定义脚本: ${BASE_DIR}/scripts/diy.sh${COLOR_RESET}"
         echo -e "${COLOR_YELLOW}ℹ️ 跳过第三方软件包安装${COLOR_RESET}"
         print_step_result "跳过第三方软件包安装"
     fi
     
-    # 步骤4：重新安装Feeds（确保新添加的软件包被安装）
-    print_step_title "步骤4：重新安装软件源"
+    # 步骤4：重新安装Feeds（让系统识别新添加的软件包）- 关键步骤！
+    print_step_title "步骤4：重新安装软件源（识别第三方包）"
     safe_execute "feeds-reinstall" ./scripts/feeds install -a
     print_step_result "软件源重新安装完成"
     
-    # 步骤5：合并基础配置文件
-    print_step_title "步骤5：合并基础配置文件"
+    # 步骤5：验证第三方软件包是否可用
+    print_step_title "步骤5：验证软件包可用性"
+    log_info "🔍 验证关键软件包是否可用..."
+    
+    # 检查 Tailscale
+    if ./scripts/feeds search luci-app-tailscale 2>/dev/null | grep -q "luci-app-tailscale"; then
+        log_success "✅ luci-app-tailscale 已可用"
+    else
+        log_warning "⚠️ luci-app-tailscale 仍未找到"
+    fi
+    
+    # 检查 WolPlus
+    if ./scripts/feeds search luci-app-wolplus 2>/dev/null | grep -q "luci-app-wolplus"; then
+        log_success "✅ luci-app-wolplus 已可用"
+    else
+        log_warning "⚠️ luci-app-wolplus 仍未找到"
+    fi
+    
+    # 检查其他关键软件包
+    local key_packages=("luci-app-openclash" "luci-app-netspeedtest" "luci-app-partexp")
+    for pkg in "${key_packages[@]}"; do
+        if ./scripts/feeds search "$pkg" 2>/dev/null | grep -q "$pkg"; then
+            log_success "✅ $pkg 已可用"
+        else
+            log_warning "⚠️ $pkg 仍未找到"
+        fi
+    done
+    
+    print_step_result "软件包可用性验证完成"
+    
+    # 步骤6：合并基础配置文件 - 现在软件包都已存在！
+    print_step_title "步骤6：合并基础配置文件"
     log_info "🔧 合并基础配置: base_${SOC_NAME}.config + base_${REPO_SHORT}.config"
     
     # 创建临时文件保存合并前的配置
     local base_config="${BASE_DIR}/configs/base_${SOC_NAME}.config"
     local branch_config="${BASE_DIR}/configs/base_${REPO_SHORT}.config"
     local merged_config=".config"
+    
+    # 检查配置文件是否存在
+    if [[ ! -f "$base_config" ]]; then
+        log_error "❌ 芯片配置文件不存在: $base_config"
+        exit 1
+    fi
+    
+    if [[ ! -f "$branch_config" ]]; then
+        log_error "❌ 分支配置文件不存在: $branch_config"
+        exit 1
+    fi
     
     # 合并配置文件
     cat "$base_config" "$branch_config" > "$merged_config"
@@ -303,8 +346,8 @@ prepare_base_environment() {
     
     print_step_result "基础配置文件合并完成"
     
-    # 步骤6：应用基础配置
-    print_step_title "步骤6：应用基础配置"
+    # 步骤7：应用基础配置 - 现在不会再丢失软件包了！
+    print_step_title "步骤7：应用基础配置"
     log_info "⚙️ 应用基础配置..."
     
     # 提取格式化前的luci软件包
@@ -328,8 +371,8 @@ prepare_base_environment() {
     
     print_step_result "基础配置应用完成"
     
-    # 步骤7：预下载依赖
-    print_step_title "步骤7：预下载基础依赖"
+    # 步骤8：预下载依赖
+    print_step_title "步骤8：预下载基础依赖"
     log_info "📥 预下载基础依赖..."
     
     if make download -j$(nproc) > "${LOG_DIR}/${REPO_SHORT}-make-download-base.log" 2>&1; then
@@ -362,9 +405,8 @@ prepare_base_environment() {
 #   2. 合并软件包配置
 #   3. 格式化并验证最终配置
 #   4. 记录合并后的Luci软件包
-#   5. 应用自定义脚本
-#   6. 编译固件
-#   7. 处理产出物
+#   5. 编译固件
+#   6. 处理产出物
 build_firmware() {
     log_info "🔨 [阶段二] 开始为分支 ${REPO_SHORT} 编译 ${CONFIG_LEVEL} 配置固件..."
     
@@ -382,17 +424,24 @@ build_firmware() {
     print_step_title "步骤1：合并软件包配置"
     log_info "🔧 叠加软件包配置: ${CONFIG_LEVEL}.config"
     
+    # 检查软件包配置文件是否存在
+    local config_file="${BASE_DIR}/configs/${CONFIG_LEVEL}.config"
+    if [[ ! -f "$config_file" ]]; then
+        log_error "❌ 软件包配置文件不存在: $config_file"
+        exit 1
+    fi
+    
     # 备份当前配置
     cp .config .config.backup
     
     # 将软件包配置追加到现有.config文件末尾
-    cat "${BASE_DIR}/configs/${CONFIG_LEVEL}.config" >> .config
+    cat "$config_file" >> .config
     
     # 输出合并摘要
     echo -e "\n${COLOR_BLUE}📋 软件包配置合并摘要：${COLOR_RESET}"
     echo -e "${COLOR_CYAN}基础配置行数：$(wc -l < .config.backup)${COLOR_RESET}"
-    echo -e "${COLOR_CYAN}软件包配置：${BASE_DIR}/configs/${CONFIG_LEVEL}.config${COLOR_RESET}"
-    echo -e "${COLOR_CYAN}软件包配置行数：$(wc -l < "${BASE_DIR}/configs/${CONFIG_LEVEL}.config")${COLOR_RESET}"
+    echo -e "${COLOR_CYAN}软件包配置：${config_file}${COLOR_RESET}"
+    echo -e "${COLOR_CYAN}软件包配置行数：$(wc -l < "$config_file")${COLOR_RESET}"
     echo -e "${COLOR_CYAN}合并后总行数：$(wc -l < .config)${COLOR_RESET}"
     
     # 提取并显示新增的luci软件包
