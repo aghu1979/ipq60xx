@@ -81,14 +81,22 @@ jobs:
           fi
 
       - name: 🧹 清理磁盘空间
-        uses: sbwml/actions@free-disk
+        uses: jlumbroso/free-disk-space@main
         with:
-          # 保留空间 (GB), 默认为5GB
-          root-reserve-gb: 5
-          # swap大小 (GB)
-          swap-size-gb: 1
-          # 构建目录挂载路径 (使用tmpfs加速)
-          build-mount-path: build
+          # 清理工具链，通常很大
+          tool-cache: true
+          # 清理Android SDK
+          android: true
+          # 清理.NET
+          dotnet: true
+          # 清理Haskell
+          haskell: true
+          # 清理Docker镜像
+          docker-images: true
+          # 清理大型包
+          large-packages: true
+          # 清理swap文件
+          swap-storage: true
 
       - name: 🌍 设置环境变量
         run: |
@@ -186,14 +194,22 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🧹 清理磁盘空间
-        uses: sbwml/actions@free-disk
+        uses: jlumbroso/free-disk-space@main
         with:
-          # 保留空间 (GB), 为最终固件预留更多空间
-          root-reserve-gb: 2
-          # swap大小 (GB)
-          swap-size-gb: 1
-          # 构建目录挂载路径 (使用tmpfs加速)
-          build-mount-path: build
+          # 清理工具链，通常很大
+          tool-cache: true
+          # 清理Android SDK
+          android: true
+          # 清理.NET
+          dotnet: true
+          # 清理Haskell
+          haskell: true
+          # 清理Docker镜像
+          docker-images: true
+          # 清理大型包
+          large-packages: true
+          # 清理swap文件
+          swap-storage: true
 
       - name: 🔍 检查是否需要跳过当前矩阵任务
         id: check_skip
