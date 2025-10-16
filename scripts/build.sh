@@ -11,7 +11,7 @@
 # 启用严格模式：遇到错误立即退出，未定义的变量视为错误，管道中任一命令失败则整个管道失败
 set -euo pipefail
 
-# 导入工具函数和日志系统
+# 导入工具函数和日志系统（必须在定义变量之前导入）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/utils.sh"
 source "${SCRIPT_DIR}/logger.sh"
@@ -38,16 +38,6 @@ OUTPUT_DIR="${BASE_DIR}/output"
 LOG_DIR="${BASE_DIR}/logs"
 # 构建目录按分支分开，确保不同分支的构建文件不会冲突
 BUILD_DIR="${BASE_DIR}/build/${REPO_SHORT}"
-
-# 颜色定义
-readonly COLOR_RED='\033[0;31m'
-readonly COLOR_GREEN='\033[0;32m'
-readonly COLOR_YELLOW='\033[1;33m'
-readonly COLOR_BLUE='\033[0;34m'
-readonly COLOR_PURPLE='\033[0;35m'
-readonly COLOR_CYAN='\033[0;36m'
-readonly COLOR_WHITE='\033[1;37m'
-readonly COLOR_RESET='\033[0m'
 
 # =============================================================================
 # 工具函数
