@@ -261,13 +261,15 @@ clone_custom_packages() {
     clone_repo "https://github.com/sirpdboy/luci-app-netspeedtest.git" "package/netspeedtest" "luci-app-netspeedtest"
     clone_repo "https://github.com/sirpdboy/luci-app-partexp.git" "package/partexp" "luci-app-partexp"
     clone_repo "https://github.com/sirpdboy/luci-app-taskplan.git" "package/taskplan" "luci-app-taskplan"
-    clone_repo "https://github.com/asvow/luci-app-tailscale.git" "package/luci-app-tailscale" "luci-app-tailscale"
-    clone_repo "https://github.com/tailscale/tailscale.git" "package/tailscale" "Tailscale"
+    clone_repo "https://github.com/tailscale/tailscale.git" "package/tailscale" "Tailscale"  # Tailscale 客户端
     clone_repo "https://github.com/nikkinikki-org/OpenWrt-momo.git" "package/momo" "Momo"
     clone_repo "https://github.com/nikkinikki-org/OpenWrt-nikki.git" "package/nikki" "Nikki"
     clone_repo "https://github.com/vernesong/OpenClash.git" "package/openclash" "OpenClash"
     clone_repo "https://github.com/VIKINGYFY/packages.git" "package/wolplus" "luci-app-wolplus"  # WolPlus 的处理
-
+    
+    # 使用 asvow 的 luci-app-tailscale 源
+    clone_repo "https://github.com/asvow/luci-app-tailscale.git" "package/luci-app-tailscale" "luci-app-tailscale"
+    
     # kenzok8软件源（该软件源仅作为查漏补缺，优先级最低）
     clone_repo "https://github.com/kenzok8/small-package" "smpackage" "kenzok8 small-package"
     
