@@ -80,29 +80,8 @@ jobs:
             exit 1
           fi
 
-      - name: 🧹 清理磁盘空间 (sbwml/actions/free-disk@main)
-        uses: sbwml/actions/free-disk@main
-        with:
-          # 工具链大小 (MB)
-          toolchain-size: 1024
-          # Android SDK 大小 (MB)
-          android-size: 1024
-          # .NET 大小 (MB)
-          dotnet-size: 1024
-          # Haskell 大小 (MB)
-          haskell-size: 0
-          # swap大小 (MB)
-          swap-size: 1024
-          # 保留空间 (MB)
-          reserve-size: 5120
-          # 要删除的目录
-          delete-docker-images: true
-          # 删除包缓存
-          delete-package-cache: true
-          # 删除临时文件
-          delete-temporary-files: true
-          # 不删除未安装的包
-          remove-uninstalled-packages: false
+      - name: 🧹 清理磁盘空间 
+        uses: sbwml/actions/free-disk
 
       - name: 🌍 设置环境变量
         run: |
@@ -199,29 +178,8 @@ jobs:
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      - name: 🧹 清理磁盘空间 (sbwml/actions/free-disk@main)
-        uses: sbwml/actions/free-disk@main
-        with:
-          # 工具链大小 (MB)
-          toolchain-size: 1024
-          # Android SDK 大小 (MB)
-          android-size: 1024
-          # .NET 大小 (MB)
-          dotnet-size: 1024
-          # Haskell 大小 (MB)
-          haskell-size: 0
-          # swap大小 (MB)
-          swap-size: 1024
-          # 保留空间 (MB)
-          reserve-size: 64
-          # 要删除的目录
-          delete-docker-images: true
-          # 删除包缓存
-          delete-package-cache: true
-          # 删除临时文件
-          delete-temporary-files: true
-          # 不删除未安装的包
-          remove-uninstalled-packages: false
+      - name: 🧹 清理磁盘空间 
+        uses: sbwml/actions/free-disk
 
       - name: 🔍 检查是否需要跳过当前矩阵任务
         id: check_skip
