@@ -81,7 +81,7 @@ jobs:
           fi
 
       - name: 🧹 清理磁盘空间 
-        uses: sbwml/actions/free-disk
+        uses: sbwml/actions@free-disk
 
       - name: 🌍 设置环境变量
         run: |
@@ -179,7 +179,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🧹 清理磁盘空间 
-        uses: sbwml/actions/free-disk
+        uses: sbwml/actions@free-disk
 
       - name: 🔍 检查是否需要跳过当前矩阵任务
         id: check_skip
