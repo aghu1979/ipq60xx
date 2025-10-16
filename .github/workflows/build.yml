@@ -48,22 +48,25 @@ jobs:
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
-        with:
-          # 递归检出子模块
-          submodules: recursive
-          # 获取完整历史（虽然我们用depth=1，但确保所有文件都被检出）
-          fetch-depth: 1
 
       - name: 📁 验证目录结构
         run: |
           echo "🔍 当前目录结构："
           ls -la
           echo ""
-          echo "📁 scripts目录内容："
-          if [ -d "scripts" ]; then
-            ls -la scripts/
+          echo "📁 configs目录内容："
+          if [ -d "configs" ]; then
+            ls -la configs/
+            echo ""
+            echo "📁 scripts目录内容："
+            if [ -d "scripts" ]; then
+              ls -la scripts/
+            else
+              echo "❌ scripts目录不存在"
+              exit 1
+            fi
           else
-            echo "❌ scripts目录不存在"
+            echo "❌ configs目录不存在"
             exit 1
           fi
 
@@ -104,16 +107,24 @@ jobs:
       - name: 🔐 计算基础配置哈希
         id: calc_hash
         run: |
+          # 显示当前工作目录
+          echo "📍 当前工作目录: $(pwd)"
+          
           # 检查配置文件是否存在
           if [ ! -f "configs/base_${SOC_NAME}.config" ]; then
             echo "❌ 配置文件不存在: configs/base_${SOC_NAME}.config"
+            echo "📁 configs目录内容："
+            ls -la configs/ || echo "configs目录不存在"
             exit 1
           fi
           if [ ! -f "configs/base_${REPO_SHORT}.config" ]; then
             echo "❌ 配置文件不存在: configs/base_${REPO_SHORT}.config"
+            echo "📁 configs目录内容："
+            ls -la configs/ || echo "configs目录不存在"
             exit 1
           fi
           
+          # 计算哈希值
           HASH=$(sha256sum configs/base_${SOC_NAME}.config configs/base_${REPO_SHORT}.config | sha256sum | cut -d' ' -f1)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
           echo "${{ matrix.branch }}=${{ steps.calc_hash.outputs.hash }}" >> ${{ github.workspace }}/hashes.txt
@@ -133,9 +144,7 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           echo "📦 为 ${{ matrix.branch }} 准备基础环境..."
-          # 确保脚本有执行权限
           chmod +x scripts/*.sh
-          # 执行准备基础环境脚本
           ./scripts/build.sh prepare-base
 
       - name: 📤 上传哈希文件
@@ -159,24 +168,6 @@ jobs:
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
-        with:
-          # 递归检出子模块
-          submodules: recursive
-          # 获取完整历史
-          fetch-depth: 1
-
-      - name: 📁 验证目录结构
-        run: |
-          echo "🔍 当前目录结构："
-          ls -la
-          echo ""
-          echo "📁 scripts目录内容："
-          if [ -d "scripts" ]; then
-            ls -la scripts/
-          else
-            echo "❌ scripts目录不存在"
-            exit 1
-          fi
 
       - name: 🧹 清理磁盘空间
         uses: easimon/maximize-build-space@master
@@ -268,9 +259,7 @@ jobs:
       - name: 🔨 编译固件
         if: steps.check_skip.outputs.skip == 'false'
         run: |
-          # 确保脚本有执行权限
           chmod +x scripts/*.sh
-          # 执行编译固件脚本
           ./scripts/build.sh build-firmware
 
       - name: 📊 显示系统资源使用情况
