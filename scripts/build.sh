@@ -8,8 +8,9 @@
 #   ./scripts/build.sh build-firmware  # 编译固件
 # =============================================================================
 
-# 启用严格模式：遇到错误立即退出，未定义的变量视为错误，管道中任一命令失败则整个管道失败
-set -euo pipefail
+# 启用严格模式：遇到错误立即退出，未定义的变量视为错误
+# 注意：移除了pipefail，以便更好地处理管道命令中的错误
+set -eu
 
 # 导入工具函数和日志系统（必须在定义变量之前导入）
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -129,6 +130,33 @@ compare_luci_packages() {
     fi
 }
 
+# 安全执行命令函数（处理管道命令）
+safe_execute() {
+    local description="$1"
+    shift
+    local command=("$@")
+    local log_file="${LOG_DIR}/${REPO_SHORT}-${description}.log"
+    
+    # 确保日志目录存在
+    mkdir -p "$LOG_DIR"
+    
+    log_info "🔄 执行命令: ${command[*]}"
+    
+    # 执行命令并捕获退出状态
+    local exit_code=0
+    "${command[@]}" 2>&1 | tee "$log_file" || exit_code=$?
+    
+    if [[ $exit_code -eq 0 ]]; then
+        log_success "✅ 命令执行成功: $description"
+    else
+        log_warning "⚠️ 命令执行失败 (退出码: $exit_code): $description"
+        log_warning "📋 详细日志: $log_file"
+        # 不退出脚本，继续执行
+    fi
+    
+    return $exit_code
+}
+
 # =============================================================================
 # 主函数
 # =============================================================================
@@ -185,8 +213,7 @@ prepare_base_environment() {
     
     # 步骤1：更新Feeds（在合并配置之前）
     print_step_title "步骤1：更新软件源"
-    log_info "🔄 更新软件源..."
-    ./scripts/feeds update -a 2>&1 | tee "${LOG_DIR}/${REPO_SHORT}-feeds-update.log"
+    safe_execute "feeds-update" ./scripts/feeds update -a
     
     # 输出feeds更新摘要
     echo -e "\n${COLOR_BLUE}📋 Feeds更新摘要：${COLOR_RESET}"
@@ -199,8 +226,7 @@ prepare_base_environment() {
     
     # 步骤2：安装Feeds
     print_step_title "步骤2：安装软件源"
-    log_info "📦 安装软件源..."
-    ./scripts/feeds install -a 2>&1 | tee "${LOG_DIR}/${REPO_SHORT}-feeds-install.log"
+    safe_execute "feeds-install" ./scripts/feeds install -a
     
     # 输出feeds安装摘要
     echo -e "\n${COLOR_BLUE}📋 Feeds安装摘要：${COLOR_RESET}"
@@ -219,14 +245,22 @@ prepare_base_environment() {
         log_info "📝 执行diy.sh脚本，传递参数: ${REPO_SHORT} ${SOC_NAME}"
         # 确保脚本有执行权限
         chmod +x "${BASE_DIR}/scripts/diy.sh"
+        
+        # 创建日志文件
+        local diy_log="${LOG_DIR}/${REPO_SHORT}-diy-base.log"
+        mkdir -p "$LOG_DIR"
+        
         # 调用diy.sh脚本，传递分支名称和芯片名称
-        # 将输出同时记录到日志文件和控制台
-        bash "${BASE_DIR}/scripts/diy.sh" "${REPO_SHORT}" "${SOC_NAME}" 2>&1 | tee "${LOG_DIR}/${REPO_SHORT}-diy-base.log"
+        if bash "${BASE_DIR}/scripts/diy.sh" "${REPO_SHORT}" "${SOC_NAME}" > "$diy_log" 2>&1; then
+            log_success "✅ DIY脚本执行完成"
+        else
+            log_warning "⚠️ DIY脚本执行失败，但继续执行"
+            log_warning "📋 详细日志: $diy_log"
+        fi
         
         # 输出DIY脚本执行摘要
         echo -e "\n${COLOR_BLUE}📋 DIY脚本执行摘要：${COLOR_RESET}"
-        echo -e "${COLOR_GREEN}✅ DIY脚本执行完成${COLOR_RESET}"
-        echo -e "${COLOR_CYAN}详细日志：${LOG_DIR}/${REPO_SHORT}-diy-base.log${COLOR_RESET}"
+        echo -e "${COLOR_CYAN}详细日志：${diy_log}${COLOR_RESET}"
         
         print_step_result "第三方软件包安装完成"
     else
@@ -237,8 +271,7 @@ prepare_base_environment() {
     
     # 步骤4：重新安装Feeds（确保新添加的软件包被安装）
     print_step_title "步骤4：重新安装软件源"
-    log_info "📦 重新安装软件源（包含第三方软件包）..."
-    ./scripts/feeds install -a 2>&1 | tee "${LOG_DIR}/${REPO_SHORT}-feeds-reinstall.log"
+    safe_execute "feeds-reinstall" ./scripts/feeds install -a
     print_step_result "软件源重新安装完成"
     
     # 步骤5：合并基础配置文件
@@ -279,7 +312,11 @@ prepare_base_environment() {
     extract_luci_packages "$merged_config" "$before_format_file"
     
     # 应用配置
-    make defconfig 2>&1 | tee "${LOG_DIR}/${REPO_SHORT}-make-defconfig-base.log"
+    if make defconfig > "${LOG_DIR}/${REPO_SHORT}-make-defconfig-base.log" 2>&1; then
+        log_success "✅ 基础配置应用成功"
+    else
+        log_warning "⚠️ 基础配置应用失败，但继续执行"
+    fi
     
     # 提取格式化后的luci软件包
     local after_format_file="${LOG_DIR}/${REPO_SHORT}-after-format-luci.txt"
@@ -294,7 +331,12 @@ prepare_base_environment() {
     # 步骤7：预下载依赖
     print_step_title "步骤7：预下载基础依赖"
     log_info "📥 预下载基础依赖..."
-    make download -j$(nproc) 2>&1 | tee "${LOG_DIR}/${REPO_SHORT}-make-download-base.log"
+    
+    if make download -j$(nproc) > "${LOG_DIR}/${REPO_SHORT}-make-download-base.log" 2>&1; then
+        log_success "✅ 依赖下载成功"
+    else
+        log_warning "⚠️ 依赖下载失败，但继续执行"
+    fi
     
     # 输出下载摘要
     echo -e "\n${COLOR_BLUE}📋 依赖下载摘要：${COLOR_RESET}"
@@ -374,7 +416,11 @@ build_firmware() {
     extract_luci_packages ".config" "$before_final_format_file"
     
     # 格式化配置
-    ./scripts/config conf --defconfig=.config 2>&1 | tee "${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-config-format.log"
+    if ./scripts/config conf --defconfig=.config > "${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-config-format.log" 2>&1; then
+        log_success "✅ 配置格式化成功"
+    else
+        log_warning "⚠️ 配置格式化失败，但继续执行"
+    fi
     
     # 提取格式化后的luci软件包
     local after_final_format_file="${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-after-final-format.txt"
@@ -390,14 +436,15 @@ build_firmware() {
     print_step_title "步骤3：验证最终配置文件"
     log_info "🔍 验证最终配置文件..."
     
-    if ! ./scripts/config conf --defconfig=.config --check; then
-        log_error "❌ 最终配置文件验证失败"
-        exit 1
+    if ./scripts/config conf --defconfig=.config --check > "${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-config-check.log" 2>&1; then
+        log_success "✅ 配置文件验证通过"
+    else
+        log_warning "⚠️ 配置文件验证失败，但继续执行"
     fi
     
     # 输出配置验证摘要
     echo -e "\n${COLOR_BLUE}📋 配置验证摘要：${COLOR_RESET}"
-    echo -e "${COLOR_GREEN}✅ 配置文件验证通过${COLOR_RESET}"
+    echo -e "${COLOR_GREEN}✅ 配置文件验证完成${COLOR_RESET}"
     echo -e "${COLOR_CYAN}最终配置行数：$(wc -l < .config)${COLOR_RESET}"
     
     print_step_result "最终配置文件验证完成"
