@@ -173,7 +173,7 @@ jobs:
   build-firmware:
     needs: prepare-base-en障
     runs-on: ubuntu-22.04
-    strategy:
+     strategy:
       fail-fast: false
       matrix:
         include:
