@@ -1,8 +1,9 @@
-name: OpenWrt 固件编译系统
+name: 🔨 OpenWrt 固件编译系统
 
 on:
   schedule:
-    - cron: '0 16 * * 4'  # 北京时间每周五0点 (UTC+8 = UTC-8)
+    # 北京时间每周五0点 (UTC时间周四16点)
+    - cron: '0 16 * * 4'
   workflow_dispatch:
     inputs:
       branch:
@@ -32,64 +33,94 @@ on:
           - Ultra
 
 env:
+  # 使用 Ubuntu 22.04 作为编译环境
   UBUNTU_VERSION: 22.04
+  # 定义各分支仓库地址
   REPO_OPENWRT: https://github.com/openwrt/openwrt.git
   REPO_IMMWRT: https://github.com/immortalwrt/immortalwrt.git
   REPO_LIBWRT: https://github.com/openwrt/openwrt.git
+  # Feeds配置文件
   FEEDS_CONF: feeds.conf.default
+  # 最终配置文件名
   CONFIG_FILE: .config
 
 jobs:
-  # 阶段1: 准备基础环境
+  # 阶段1: 准备基础环境并缓存
+  # 此阶段为特定分支和芯片组合创建一个可复用的基础环境（包含源码、已更新的feeds）
   prepare-base:
     runs-on: ubuntu-${{ env.UBUNTU_VERSION }}
     outputs:
+      # 输出基础配置的哈希值，用于缓存键
       base-hash: ${{ steps.hash.outputs.hash }}
     steps:
-      - name: 检出代码
+      - name: 📥 检出代码
+        # 使用最新版本的checkout action
         uses: actions/checkout@v4
 
-      - name: 设置环境变量
+      - name: 🌍 设置环境变量
         run: |
-          echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB_ENV
-          echo "REPO_BRANCH=master" >> $GITHUB_ENV
-          echo "REPO_SHORT=openwrt" >> $GITHUB_ENV
-          echo "SOC_NAME=ipq60xx" >> $GITHUB_ENV
+          # 根据输入的分支设置对应的仓库信息
+          if [[ "${{ github.event.inputs.branch || 'openwrt' }}" == "openwrt" ]]; then
+            echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB_ENV
+            echo "REPO_BRANCH=master" >> $GITHUB_ENV
+            echo "REPO_SHORT=openwrt" >> $GITHUB_ENV
+          elif [[ "${{ github.event.inputs.branch || 'openwrt' }}" == "immwrt" ]]; then
+            echo "REPO_URL=${{ env.REPO_IMMWRT }}" >> $GITHUB_ENV
+            echo "REPO_BRANCH=master" >> $GITHUB_ENV
+            echo "REPO_SHORT=immwrt" >> $GITHUB_ENV
+          else
+            echo "REPO_URL=${{ env.REPO_LIBWRT }}" >> $GITHUB_ENV
+            echo "REPO_BRANCH=master" >> $GITHUB_ENV
+            echo "REPO_SHORT=libwrt" >> $GITHUB_ENV
+          fi
+          echo "SOC_NAME=${{ github.event.inputs.soc || 'ipq60xx' }}" >> $GITHUB_ENV
           echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
 
-      - name: 计算基础配置哈希
+      - name: 🔐 计算基础配置哈希
         id: hash
         run: |
+          # 合并芯片和分支的基础配置文件，计算哈希值，确保配置变更时缓存失效
           HASH=$(sha256sum configs/base_${SOC_NAME}.config configs/base_${REPO_SHORT}.config | sha256sum | cut -d' ' -f1)
           echo "hash=$HASH" >> $GITHUB_OUTPUT
+          echo "🔑 Base Config Hash: $HASH"
 
-      - name: 缓存基础环境
-        uses: actions/cache@v3
+      - name: 💾 缓存基础环境
+        # 使用最新版本的cache action
+        uses: actions/cache@v4
         with:
+          # 缓存路径：源码目录、下载缓存、feeds目录
           path: |
             base-env/
             dl/
             feeds/
+          # 缓存键：包含分支、芯片和配置哈希
           key: base-${{ env.SOC_NAME }}-${{ env.REPO_SHORT }}-${{ steps.hash.outputs.hash }}
+          # 恢复键：如果精确匹配未命中，尝试恢复同分支同芯片的旧缓存
           restore-keys: |
             base-${{ env.SOC_NAME }}-${{ env.REPO_SHORT }}-
 
-      - name: 准备基础环境
+      - name: 🚀 准备基础环境
+        # 如果缓存未命中，则执行准备步骤
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
+          echo "📦 缓存未命中，开始准备基础环境..."
           chmod +x scripts/*.sh
+          # 调用编译脚本中的 prepare-base 功能
           ./scripts/build.sh prepare-base
 
-  # 阶段2: 编译固件
+  # 阶段2: 矩阵编译固件
+  # 此阶段利用基础环境缓存，并行编译所有分支、芯片和配置的组合
   build:
     needs: prepare-base
     runs-on: ubuntu-${{ env.UBUNTU_VERSION }}
     strategy:
+      # 矩阵策略，定义所有需要编译的组合
       matrix:
         branch: [openwrt, immwrt, libwrt]
         soc: [ipq60xx]
         config: [Pro, Max, Ultra]
         include:
+          # 为每个分支定义具体的仓库信息
           - branch: openwrt
             repo_url: ${{ env.REPO_OPENWRT }}
             repo_branch: master
@@ -103,10 +134,10 @@ jobs:
             repo_branch: master
             repo_short: libwrt
     steps:
-      - name: 检出代码
+      - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      - name: 设置环境变量
+      - name: 🌍 设置环境变量
         run: |
           echo "REPO_URL=${{ matrix.repo_url }}" >> $GITHUB_ENV
           echo "REPO_BRANCH=${{ matrix.repo_branch }}" >> $GITHUB_ENV
@@ -115,54 +146,31 @@ jobs:
           echo "CONFIG_LEVEL=${{ matrix.config }}" >> $GITHUB_ENV
           echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
 
-      - name: 恢复基础环境缓存
-        uses: actions/cache@v3
+      - name: 💾 恢复基础环境缓存
+        uses: actions/cache@v4
         with:
           path: |
             base-env/
             dl/
             feeds/
+          # 使用prepare-base阶段输出的哈希值来恢复缓存
           key: base-${{ matrix.soc }}-${{ matrix.repo_short }}-${{ needs.prepare-base.outputs.base-hash }}
 
-      - name: 编译固件
+      - name: 🔨 开始编译固件
         run: |
           chmod +x scripts/*.sh
+          # 调用编译脚本中的 build-firmware 功能
           ./scripts/build.sh build-firmware
 
-      - name: 上传构建产物
-        uses: actions/upload-artifact@v3
+      - name: 📤 上传构建产物
+        # 使用最新版本的upload-artifact action
+        uses: actions/upload-artifact@v4
         with:
+          # 产物名称，包含分支、芯片、配置信息
           name: firmware-${{ matrix.repo_short }}-${{ matrix.soc }}-${{ matrix.config }}
+          # 产物路径
           path: |
             output/
             logs/
+          # 产物保留天数
           retention-days: 7
-
-  # 阶段3: 发布
-  release:
-    needs: build
-    runs-on: ubuntu-${{ env.UBUNTU_VERSION }}
-    if: github.event_name == 'schedule'
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 下载所有构建产物
-        uses: actions/download-artifact@v3
-        with:
-          path: artifacts
-
-      - name: 准备发布
-        run: |
-          chmod +x scripts/*.sh
-          ./scripts/release.sh prepare-release
-
-      - name: 创建Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ipq60xx-${{ env.TIMESTAMP }}
-          body_path: release-notes.md
-          files: |
-            release/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
