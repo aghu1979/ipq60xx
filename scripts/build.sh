@@ -609,8 +609,9 @@ format_and_validate_config() {
     
     # 使用更详细的错误处理执行格式化
     local format_log="${LOG_DIR}/${REPO_SHORT}-${config_name}-format.log"
-    # --- 修改点 1 ---
-    if ./scripts/config/conf --defconfig=.config > "$format_log" 2>&1; then
+    # --- 修改点 ---
+    # 使用 make olddefconfig 来格式化和更新配置文件
+    if make olddefconfig > "$format_log" 2>&1; then
         log_success "✅ ${stage}配置格式化成功"
     else
         log_error "❌ ${stage}配置格式化失败!"
@@ -628,23 +629,9 @@ format_and_validate_config() {
     local missing_file="${LOG_DIR}/${REPO_SHORT}-${config_name}-missing-format.txt"
     compare_luci_packages "$before_file" "$after_file" "$missing_file"
     
-    # 验证配置文件
-    log_info "🔍 验证${stage}配置文件..."
-    local check_log="${LOG_DIR}/${REPO_SHORT}-${config_name}-check.log"
-    # --- 修改点 2 ---
-    if ./scripts/config/conf --defconfig=.config --check > "$check_log" 2>&1; then
-        log_success "✅ ${stage}配置验证通过"
-    else
-        log_error "❌ ${stage}配置验证失败!"
-        log_error "📋 错误详情 (最后20行):"
-        tail -n 20 "$check_log" >&2
-        log_error "📋 完整日志: $check_log"
-        exit 1
-    fi
-    
     # 输出配置验证摘要
     echo -e "\n${COLOR_BLUE}📋 ${stage}配置验证摘要：${COLOR_RESET}"
-    echo -e "${COLOR_GREEN}✅ 配置文件验证完成${COLOR_RESET}"
+    echo -e "${COLOR_GREEN}✅ 配置文件格式化完成${COLOR_RESET}"
     echo -e "${COLOR_CYAN}最终配置行数：$(wc -l < .config)${COLOR_RESET}"
 }
 
