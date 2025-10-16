@@ -8,7 +8,7 @@ readonly LOG_WARN=2
 readonly LOG_INFO=3
 readonly LOG_SUCCESS=4
 
-# 颜色定义
+# 颜色定义（所有颜色变量在此处统一定义）
 readonly COLOR_RED='\033[0;31m'
 readonly COLOR_YELLOW='\033[0;33m'
 readonly COLOR_BLUE='\033[0;34m'
