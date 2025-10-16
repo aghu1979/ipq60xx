@@ -1,14 +1,17 @@
 #!/bin/bash
-# 企业级发布脚本
+# OpenWrt 企业级发布脚本
 # 功能：准备发布内容，生成Release说明
 
+# 设置严格模式
 set -euo pipefail
 
 # 导入工具函数
-source "$(dirname "$0")/utils.sh"
-source "$(dirname "$0")/logger.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/utils.sh"
+source "${SCRIPT_DIR}/logger.sh"
 
 # 全局变量
+BASE_DIR="${GITHUB_WORKSPACE:-$(pwd)}"
 RELEASE_DIR="${BASE_DIR}/release"
 TIMESTAMP="${TIMESTAMP:-$(date +%Y%m%d)}"
 
@@ -61,8 +64,8 @@ generate_release_notes() {
     fi
     
     # 获取Luci应用列表
-    if [[ -f "${LOG_DIR}/luci-apps-merged.log" ]]; then
-        luci_apps=$(sed 's/CONFIG_PACKAGE_//g; s/=y//g' "${LOG_DIR}/luci-apps-merged.log" | tr '\n' ', ' | sed 's/,$//')
+    if [[ -f "${BASE_DIR}/logs/luci-apps-merged.log" ]]; then
+        luci_apps=$(sed 's/CONFIG_PACKAGE_//g; s/=y//g' "${BASE_DIR}/logs/luci-apps-merged.log" | tr '\n' ', ' | sed 's/,$//')
     fi
     
     # 生成Release内容
