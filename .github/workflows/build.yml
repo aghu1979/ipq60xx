@@ -1,4 +1,4 @@
-name: 🔨 OpenWrt 固件编译系统
+name: 🔨 OpenWrt 固件编译系统 (分层构建)
 
 on:
   schedule:
@@ -7,158 +7,176 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: '选择分支'
-        required: true
-        default: 'openwrt'
+        description: '选择分支 (留空编译全部)'
+        required: false
         type: choice
         options:
+          - ''
           - openwrt
           - immwrt
           - libwrt
-      soc:
-        description: '选择芯片'
-        required: true
-        default: 'ipq60xx'
-        type: choice
-        options:
-          - ipq60xx
       config:
-        description: '选择配置级别'
-        required: true
-        default: 'Pro'
+        description: '选择配置 (留空编译全部)'
+        required: false
         type: choice
         options:
+          - ''
           - Pro
           - Max
           - Ultra
 
+env:
+  UBUNTU_VERSION: 22.04
+  REPO_OPENWRT: https://github.com/openwrt/openwrt.git
+  REPO_IMMWRT: https://github.com/immortalwrt/immortalwrt.git
+  REPO_LIBWRT: https://github.com/openwrt/openwrt.git
+
 jobs:
-  # 阶段1: 准备基础环境并缓存
-  # 此阶段为特定分支和芯片组合创建一个可复用的基础环境（包含源码、已更新的feeds）
-  prepare-base:
-    runs-on: ubuntu-22.04
-    outputs:
-      # 输出基础配置的哈希值，用于缓存键
-      base-hash: ${{ steps.hash.outputs.hash }}
-    steps:
-      - name: 📥 检出代码
-        # 使用最新版本的checkout action
-        uses: actions/checkout@v4
-
-      - name: 🌍 设置环境变量
-        run: |
-          # 根据输入的分支设置对应的仓库信息
-          if [[ "${{ github.event.inputs.branch || 'openwrt' }}" == "openwrt" ]]; then
-            echo "REPO_URL=https://github.com/openwrt/openwrt.git" >> $GITHUB_ENV
-            echo "REPO_BRANCH=master" >> $GITHUB_ENV
-            echo "REPO_SHORT=openwrt" >> $GITHUB_ENV
-          elif [[ "${{ github.event.inputs.branch || 'openwrt' }}" == "immwrt" ]]; then
-            echo "REPO_URL=https://github.com/immortalwrt/immortalwrt.git" >> $GITHUB_ENV
-            echo "REPO_BRANCH=master" >> $GITHUB_ENV
-            echo "REPO_SHORT=immwrt" >> $GITHUB_ENV
-          else
-            echo "REPO_URL=https://github.com/openwrt/openwrt.git" >> $GITHUB_ENV
-            echo "REPO_BRANCH=master" >> $GITHUB_ENV
-            echo "REPO_SHORT=libwrt" >> $GITHUB_ENV
-          fi
-          echo "SOC_NAME=${{ github.event.inputs.soc || 'ipq60xx' }}" >> $GITHUB_ENV
-          echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
-
-      - name: 🔐 计算基础配置哈希
-        id: hash
-        run: |
-          # 合并芯片和分支的基础配置文件，计算哈希值，确保配置变更时缓存失效
-          HASH=$(sha256sum configs/base_${SOC_NAME}.config configs/base_${REPO_SHORT}.config | sha256sum | cut -d' ' -f1)
-          echo "hash=$HASH" >> $GITHUB_OUTPUT
-          echo "🔑 Base Config Hash: $HASH"
-
-      - name: 💾 缓存基础环境
-        # 使用最新版本的cache action
-        uses: actions/cache@v4
-        with:
-          # 缓存路径：源码目录、下载缓存、feeds目录
-          path: |
-            base-env/
-            dl/
-            feeds/
-          # 缓存键：包含分支、芯片和配置哈希
-          key: base-${{ env.SOC_NAME }}-${{ env.REPO_SHORT }}-${{ steps.hash.outputs.hash }}
-          # 恢复键：如果精确匹配未命中，尝试恢复同分支同芯片的旧缓存
-          restore-keys: |
-            base-${{ env.SOC_NAME }}-${{ env.REPO_SHORT }}-
-
-      - name: 🚀 准备基础环境
-        # 如果缓存未命中，则执行准备步骤
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          echo "📦 缓存未命中，开始准备基础环境..."
-          chmod +x scripts/*.sh
-          # 调用编译脚本中的 prepare-base 功能
-          ./scripts/build.sh prepare-base
-
-  # 阶段2: 矩阵编译固件
-  # 此阶段利用基础环境缓存，并行编译所有分支、芯片和配置的组合
-  build:
-    needs: prepare-base
+  # ========================================
+  # 阶段一：准备并缓存基础环境
+  # ========================================
+  prepare-base-environments:
     runs-on: ubuntu-22.04
     strategy:
-      # 矩阵策略，定义所有需要编译的组合
+      fail-fast: false
       matrix:
         branch: [openwrt, immwrt, libwrt]
-        soc: [ipq60xx]
-        config: [Pro, Max, Ultra]
-        include:
-          # 为每个分支定义具体的仓库信息
-          - branch: openwrt
-            repo_url: https://github.com/openwrt/openwrt.git
-            repo_branch: master
-            repo_short: openwrt
-          - branch: immwrt
-            repo_url: https://github.com/immortalwrt/immortalwrt.git
-            repo_branch: master
-            repo_short: immwrt
-          - branch: libwrt
-            repo_url: https://github.com/openwrt/openwrt.git
-            repo_branch: master
-            repo_short: libwrt
+    outputs:
+      # 输出每个分支的哈希值
+      openwrt-hash: ${{ steps.set_hash.outputs.openwrt-hash }}
+      immwrt-hash: ${{ steps.set_hash.outputs.immwrt-hash }}
+      libwrt-hash: ${{ steps.set_hash.outputs.libwrt-hash }}
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
       - name: 🌍 设置环境变量
         run: |
-          echo "REPO_URL=${{ matrix.repo_url }}" >> $GITHUB_ENV
-          echo "REPO_BRANCH=${{ matrix.repo_branch }}" >> $GITHUB_ENV
-          echo "REPO_SHORT=${{ matrix.repo_short }}" >> $GITHUB_ENV
-          echo "SOC_NAME=${{ matrix.soc }}" >> $GITHUB_ENV
+          echo "REPO_SHORT=${{ matrix.branch }}" >> $GITHUB_ENV
+          echo "SOC_NAME=ipq60xx" >> $GITHUB_ENV
+          echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
+          
+          # 根据分支设置仓库URL
+          if [[ "${{ matrix.branch }}" == "openwrt" ]]; then
+            echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB_ENV
+          elif [[ "${{ matrix.branch }}" == "immwrt" ]]; then
+            echo "REPO_URL=${{ env.REPO_IMMWRT }}" >> $GITHUB_ENV
+          else
+            echo "REPO_URL=${{ env.REPO_LIBWRT }}" >> $GITHUB_ENV
+          fi
+
+      - name: 🔐 计算基础配置哈希
+        id: calc_hash
+        run: |
+          # 计算芯片配置和分支配置的合并哈希
+          HASH=$(sha256sum configs/base_${SOC_NAME}.config configs/base_${REPO_SHORT}.config | sha256sum | cut -d' ' -f1)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+          echo "🔑 Base Config Hash for ${{ matrix.branch }}: $HASH"
+          
+          # 将哈希值写入环境变量，供后续步骤使用
+          echo "${{ matrix.branch }}_HASH=$HASH" >> $GITHUB_ENV
+
+      - name: 📝 保存哈希值到文件
+        run: |
+          # 将哈希值保存到文件，供后续job使用
+          echo "${{ matrix.branch }}=${{ steps.calc_hash.outputs.hash }}" >> ${{ github.workspace }}/hashes.txt
+
+      - name: 💾 缓存基础环境
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/${{ matrix.branch }}/
+            dl/
+            feeds/
+          # 缓存键：分支 + 基础配置哈希
+          key: base-${{ matrix.branch }}-${{ steps.calc_hash.outputs.hash }}
+          restore-keys: |
+            base-${{ matrix.branch }}-
+
+      - name: 🚀 准备基础环境
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          echo "📦 为 ${{ matrix.branch }} 准备基础环境..."
+          chmod +x scripts/*.sh
+          ./scripts/build.sh prepare-base
+
+      - name: 📤 上传哈希文件
+        # 只有当是最后一个矩阵任务时才上传，避免覆盖
+        if: matrix.branch == 'libwrt'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hashes-file
+          path: ${{ github.workspace }}/hashes.txt
+
+  # ========================================
+  # 阶段二：在基础环境上编译最终固件
+  # ========================================
+  build-firmware:
+    needs: prepare-base-environments
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [openwrt, immwrt, libwrt]
+        config: [Pro, Max, Ultra]
+    # 手动触发时的过滤逻辑
+    if: |
+      (github.event.inputs.branch == '' || github.event.inputs.branch == matrix.branch) &&
+      (github.event.inputs.config == '' || github.event.inputs.config == matrix.config)
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+
+      - name: 🌍 设置环境变量
+        run: |
+          echo "REPO_SHORT=${{ matrix.branch }}" >> $GITHUB_ENV
+          echo "SOC_NAME=ipq60xx" >> $GITHUB_ENV
           echo "CONFIG_LEVEL=${{ matrix.config }}" >> $GITHUB_ENV
           echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
+          
+          # 根据分支设置仓库URL
+          if [[ "${{ matrix.branch }}" == "openwrt" ]]; then
+            echo "REPO_URL=${{ env.REPO_OPENWRT }}" >> $GITHUB_ENV
+          elif [[ "${{ matrix.branch }}" == "immwrt" ]]; then
+            echo "REPO_URL=${{ env.REPO_IMMWRT }}" >> $GITHUB_ENV
+          else
+            echo "REPO_URL=${{ env.REPO_LIBWRT }}" >> $GITHUB_ENV
+          fi
+
+      - name: 📥 下载哈希文件
+        uses: actions/download-artifact@v4
+        with:
+          name: hashes-file
+          path: ${{ github.workspace }}
+
+      - name: 🔍 读取对应分支的哈希值
+        id: get_hash
+        run: |
+          # 从文件中读取对应分支的哈希值
+          HASH=$(grep "^${{ matrix.branch }}=" hashes.txt | cut -d'=' -f2)
+          echo "hash=$HASH" >> $GITHUB_OUTPUT
+          echo "🔑 Retrieved hash for ${{ matrix.branch }}: $HASH"
 
       - name: 💾 恢复基础环境缓存
         uses: actions/cache@v4
         with:
           path: |
-            base-env/
+            build/${{ matrix.branch }}/
             dl/
             feeds/
-          # 使用prepare-base阶段输出的哈希值来恢复缓存
-          key: base-${{ env.SOC_NAME }}-${{ env.REPO_SHORT }}-${{ needs.prepare-base.outputs.base-hash }}
+          # 使用上一步读取的哈希值
+          key: base-${{ matrix.branch }}-${{ steps.get_hash.outputs.hash }}
 
-      - name: 🔨 开始编译固件
+      - name: 🔨 编译固件
         run: |
           chmod +x scripts/*.sh
-          # 调用编译脚本中的 build-firmware 功能
           ./scripts/build.sh build-firmware
 
       - name: 📤 上传构建产物
-        # 使用最新版本的upload-artifact action
         uses: actions/upload-artifact@v4
         with:
-          # 产物名称，包含分支、芯片、配置信息
-          name: firmware-${{ matrix.repo_short }}-${{ matrix.soc }}-${{ matrix.config }}
-          # 产物路径
+          name: firmware-${{ matrix.branch }}-${{ matrix.config }}
           path: |
             output/
             logs/
-          # 产物保留天数
           retention-days: 7
