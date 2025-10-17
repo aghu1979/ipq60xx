@@ -416,6 +416,27 @@ prepare_base_environment() {
         cat "$base_luci_file" | sed 's/^/  - /'
     fi
     
+    # 步骤6.5：清理配置文件中的无效行和循环依赖
+    print_step_title "步骤6.5：清理配置文件"
+    log_info "🧹 清理配置文件中的无效行和循环依赖..."
+    
+    # 创建一个临时文件来存储清理后的配置
+    local temp_config=$(mktemp)
+    
+    # 过滤掉无效的注释行（如 "# 通用配置文件"）
+    # 过滤掉导致循环依赖的软件包
+    grep -v "^# [^#]" "$merged_config" | \
+    grep -v "CONFIG_PACKAGE_momo=y" | \
+    grep -v "CONFIG_PACKAGE_luci-app-momo=y" | \
+    grep -v "CONFIG_PACKAGE_sing-box=y" | \
+    grep -v "CONFIG_PACKAGE_sing-box-tiny=y" > "$temp_config"
+    
+    # 用清理后的配置替换原配置
+    mv "$temp_config" "$merged_config"
+    
+    log_success "✅ 配置文件清理完成"
+    print_step_result "配置文件清理完成"
+    
     # 步骤7：格式化和验证基础配置 - 立即执行！
     print_step_title "步骤7：格式化和验证基础配置"
     format_and_validate_config "base"
@@ -513,6 +534,25 @@ build_firmware() {
         comm -13 "$base_luci_file" "$merged_luci_file" | sed 's/^/  - /' || echo "  - 无新增软件包"
     fi
     
+    # 步骤1.5：清理配置文件中的循环依赖
+    print_step_title "步骤1.5：清理配置文件中的循环依赖"
+    log_info "🧹 清理配置文件中的循环依赖..."
+    
+    # 创建一个临时文件来存储清理后的配置
+    local temp_config=$(mktemp)
+    
+    # 过滤掉导致循环依赖的软件包
+    grep -v "CONFIG_PACKAGE_momo=y" .config | \
+    grep -v "CONFIG_PACKAGE_luci-app-momo=y" | \
+    grep -v "CONFIG_PACKAGE_sing-box=y" | \
+    grep -v "CONFIG_PACKAGE_sing-box-tiny=y" > "$temp_config"
+    
+    # 用清理后的配置替换原配置
+    mv "$temp_config" .config
+    
+    log_success "✅ 配置文件循环依赖清理完成"
+    print_step_result "配置文件循环依赖清理完成"
+    
     # 步骤2：格式化和验证最终配置 - 立即执行！
     print_step_title "步骤2：格式化和验证最终配置文件"
     format_and_validate_config "final"
@@ -609,16 +649,26 @@ format_and_validate_config() {
     
     # 使用更详细的错误处理执行格式化
     local format_log="${LOG_DIR}/${REPO_SHORT}-${config_name}-format.log"
-    # --- 修改点 ---
-    # 使用 make olddefconfig 来格式化和更新配置文件
+    
+    # 设置终端类型以避免 "Error opening terminal: unknown" 错误
+    export TERM=dumb
+    
+    # 尝试格式化配置，如果失败则尝试非交互式方式
     if make olddefconfig > "$format_log" 2>&1; then
         log_success "✅ ${stage}配置格式化成功"
     else
-        log_error "❌ ${stage}配置格式化失败!"
-        log_error "📋 错误详情 (最后20行):"
-        tail -n 20 "$format_log" >&2
-        log_error "📋 完整日志: $format_log"
-        exit 1
+        log_warning "⚠️ ${stage}配置格式化失败，尝试非交互式方式..."
+        
+        # 如果 olddefconfig 失败，尝试使用 defconfig
+        if make defconfig > "$format_log" 2>&1; then
+            log_success "✅ ${stage}配置格式化成功（使用defconfig）"
+        else
+            log_error "❌ ${stage}配置格式化失败!"
+            log_error "📋 错误详情 (最后20行):"
+            tail -n 20 "$format_log" >&2
+            log_error "📋 完整日志: $format_log"
+            exit 1
+        fi
     fi
     
     # 提取格式化后的luci软件包
