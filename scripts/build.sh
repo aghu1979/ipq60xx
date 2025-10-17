@@ -131,7 +131,7 @@ extract_luci_packages() {
     fi
 }
 
-# 对比软件包列表并显示差异 (优化版)
+# 对比软件包列表并显示差异 (增强版)
 compare_and_show_package_diff() {
     local before_file="$1"
     local after_file="$2"
@@ -142,6 +142,7 @@ compare_and_show_package_diff() {
     [[ -f "$after_file" ]] || touch "$after_file"
     
     echo -e "\n${COLOR_BLUE}📊 ${stage_name} Luci软件包对比结果：${COLOR_RESET}"
+    print_separator
     
     local before_count=$(wc -l < "$before_file" 2>/dev/null || echo "0")
     local after_count=$(wc -l < "$after_file" 2>/dev/null || echo "0")
@@ -153,7 +154,16 @@ compare_and_show_package_diff() {
     comm -13 "$before_file" "$after_file" > "$added_file"
     echo -e "\n${COLOR_GREEN}✅ 新增的软件包 (由依赖自动引入)：${COLOR_RESET}"
     if [[ -s "$added_file" ]]; then
+        echo -e "${COLOR_YELLOW}文件名列表：${COLOR_RESET}"
         cat "$added_file" | sed 's/^/  - /'
+        echo -e "\n${COLOR_YELLOW}详细信息：${COLOR_RESET}"
+        while IFS= read -r package; do
+            echo -e "  ${COLOR_CYAN}📦 $package${COLOR_RESET}"
+            # 尝试获取软件包描述
+            if ./scripts/feeds info "$package" 2>/dev/null | grep -A 5 "Description:" | sed 's/^/    /'; then
+                echo ""
+            fi
+        done < "$added_file"
     else
         echo -e "  - 无"
     fi
@@ -163,7 +173,37 @@ compare_and_show_package_diff() {
     comm -23 "$before_file" "$after_file" > "$removed_file"
     echo -e "\n${COLOR_RED}❌ 移除的软件包 (因依赖不满足)：${COLOR_RESET}"
     if [[ -s "$removed_file" ]]; then
+        echo -e "${COLOR_YELLOW}文件名列表：${COLOR_RESET}"
         cat "$removed_file" | sed 's/^/  - /'
+        echo -e "\n${COLOR_YELLOW}详细信息：${COLOR_RESET}"
+        while IFS= read -r package; do
+            echo -e "  ${COLOR_RED}📦 $package${COLOR_RESET}"
+            # 尝试获取软件包信息和依赖
+            echo -e "    ${COLOR_YELLOW}尝试获取软件包信息...${COLOR_RESET}"
+            if ./scripts/feeds info "$package" 2>/dev/null > /dev/null; then
+                echo -e "    ${COLOR_GREEN}✅ 软件包存在于feeds中${COLOR_RESET}"
+                # 显示依赖
+                local deps=$(./scripts/feeds info "$package" 2>/dev/null | grep "Depends:" | sed 's/Depends://' || echo "无明确依赖信息")
+                if [[ -n "$deps" && "$deps" != "无明确依赖信息" ]]; then
+                    echo -e "    ${COLOR_CYAN}🔗 依赖项：${COLOR_RESET}"
+                    for dep in $deps; do
+                        # 清理依赖名称
+                        dep=$(echo "$dep" | sed 's/[<>=].*//' | sed 's/^+//')
+                        if [[ -n "$dep" && "$dep" != "@@" ]]; then
+                            # 检查依赖是否满足
+                            if grep -q "^CONFIG_PACKAGE_${dep}=y" .config 2>/dev/null; then
+                                echo -e "      ${COLOR_GREEN}✅ $dep (已满足)${COLOR_RESET}"
+                            else
+                                echo -e "      ${COLOR_RED}❌ $dep (未满足)${COLOR_RESET}"
+                            fi
+                        fi
+                    done
+                fi
+            else
+                echo -e "    ${COLOR_RED}❌ 软件包不存在于feeds中${COLOR_RESET}"
+            fi
+            echo ""
+        done < "$removed_file"
     else
         echo -e "  - 无"
     fi
@@ -171,7 +211,7 @@ compare_and_show_package_diff() {
     rm -f "$added_file" "$removed_file"
 }
 
-# 安全执行命令函数
+# 安全执行命令函数 (增强版)
 safe_execute() {
     local description="$1"
     shift
@@ -181,17 +221,42 @@ safe_execute() {
     mkdir -p "$LOG_DIR"
     
     log_info "🔄 执行命令: ${command[*]}"
+    log_info "📋 详细日志: $log_file"
     
+    # 创建临时文件来捕获输出
+    local temp_output=$(mktemp)
     local exit_code=0
-    "${command[@]}" 2>&1 | tee "$log_file" || exit_code=$?
+    
+    # 执行命令并捕获输出
+    "${command[@]}" > "$temp_output" 2>&1 || exit_code=$?
+    
+    # 同时输出到控制台和日志文件
+    tee -a "$log_file" < "$temp_output"
     
     if [[ $exit_code -eq 0 ]]; then
-        log_success "✅ 前令执行成功: $description"
+        log_success "✅ 命令执行成功: $description"
     else
+        # 高亮显示错误
+        echo -e "\n${COLOR_RED}========================================${COLOR_RESET}"
+        echo -e "${COLOR_RED}❌ 命令执行失败${COLOR_RESET}"
+        echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+        echo -e "${COLOR_YELLOW}命令: ${command[*]}${COLOR_RESET}"
+        echo -e "${COLOR_YELLOW}退出码: $exit_code${COLOR_RESET}"
+        echo -e "${COLOR_YELLOW}日志文件: $log_file${COLOR_RESET}"
+        echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+        
+        # 显示错误输出的最后20行
+        echo -e "\n${COLOR_RED}错误输出 (最后20行)：${COLOR_RESET}"
+        tail -n 20 "$temp_output" | while IFS= read -r line; do
+            echo -e "${COLOR_RED}$line${COLOR_RESET}"
+        done
+        echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+        
         log_warning "⚠️ 命令执行失败 (退出码: $exit_code): $description"
         log_warning "📋 详细日志: $log_file"
     fi
     
+    rm -f "$temp_output"
     return $exit_code
 }
 
@@ -223,7 +288,7 @@ cleanup_temp_files() {
 }
 
 # =============================================================================
-# 新增：软件包依赖检查和强制保留函数
+# 新增：软件包依赖检查和强制保留函数 (增强版)
 # =============================================================================
 
 # 检查并强制保留用户指定的软件包
@@ -232,6 +297,7 @@ cleanup_temp_files() {
 check_and_enforce_package_dependencies() {
     local stage="$1"
     log_info "🔍 检查${stage}配置的软件包依赖并强制保留用户指定软件包..."
+    print_separator
     
     # 1. 提取补全前的luci软件包（用户需要的软件包）
     local before_file="${LOG_DIR}/${REPO_SHORT}-${stage}-before-defconfig.txt"
@@ -241,10 +307,21 @@ check_and_enforce_package_dependencies() {
     local required_packages_file="${LOG_DIR}/${REPO_SHORT}-${stage}-required-packages.txt"
     cp "$before_file" "$required_packages_file"
     
+    # 显示用户需要的软件包列表
+    if [[ -s "$required_packages_file" ]]; then
+        echo -e "\n${COLOR_BLUE}📋 用户需要的Luci软件包列表：${COLOR_RESET}"
+        while IFS= read -r package; do
+            echo -e "  ${COLOR_CYAN}📦 $package${COLOR_RESET}"
+        done < "$required_packages_file"
+        echo ""
+    fi
+    
     # 3. 首次运行 make defconfig 补全依赖
     log_info "🔄 首次运行 'make defconfig' 补全配置依赖..."
     local defconfig_log="${LOG_DIR}/${REPO_SHORT}-${stage}-defconfig.log"
-    if make defconfig > "$defconfig_log" 2>&1; then
+    
+    # 使用safe_execute来执行defconfig，以便高亮显示错误
+    if safe_execute "${stage}-defconfig" make defconfig; then
         log_success "✅ ${stage}配置首次补全成功"
     else
         log_error "❌ ${stage}配置首次补全失败"
@@ -262,6 +339,14 @@ check_and_enforce_package_dependencies() {
     comm -23 "$required_packages_file" "$after_file" > "$removed_file"
     
     if [[ -s "$removed_file" ]]; then
+        # 高亮显示警告
+        echo -e "\n${COLOR_RED}========================================${COLOR_RESET}"
+        echo -e "${COLOR_RED}⚠️ 检测到用户需要的软件包被移除${COLOR_RESET}"
+        echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+        echo -e "${COLOR_YELLOW}阶段: ${stage}${COLOR_RESET}"
+        echo -e "${COLOR_YELLOW}被移除的软件包数量: $(wc -l < "$removed_file")${COLOR_RESET}"
+        echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+        
         log_warning "⚠️ 检测到 ${stage} 配置中有用户需要的软件包被移除"
         log_warning "📋 被移除的软件包列表："
         cat "$removed_file" | sed 's/^/  - /'
@@ -284,7 +369,7 @@ check_and_enforce_package_dependencies() {
 EOF
         
         while IFS= read -r package; do
-            log_info "  - 强制恢复软件包: $package"
+            echo -e "\n${COLOR_YELLOW}🔧 处理软件包: $package${COLOR_RESET}"
             echo "" >> "$error_report"
             echo "处理软件包: $package" >> "$error_report"
             echo "----------------------------------------" >> "$error_report"
@@ -359,13 +444,13 @@ EOF
                     echo "最终结果: 成功恢复" >> "$error_report"
                     ((restored_count++))
                 else
+                    # 高亮显示失败
+                    echo -e "\n${COLOR_RED}❌ 软件包 $package 恢复失败${COLOR_RESET}"
+                    echo "    📋 软件包信息日志: ${LOG_DIR}/${REPO_SHORT}-${stage}-${package}-info.log"
+                    echo "    📋 修复日志: $fix_log"
+                    
                     log_error "    ❌ 软件包 $package 仍然被移除"
                     echo "最终结果: 恢复失败" >> "$error_report"
-                    
-                    # 生成详细错误信息
-                    log_error "    📋 软件包 $package 恢复失败详情:"
-                    log_error "      - 软件包信息日志: ${LOG_DIR}/${REPO_SHORT}-${stage}-${package}-info.log"
-                    log_error "      - 修复日志: $fix_log"
                     
                     # 添加到错误报告
                     echo "错误详情:" >> "$error_report"
@@ -379,6 +464,8 @@ EOF
                     ((failed_count++))
                 fi
             else
+                # 高亮显示错误
+                echo -e "\n${COLOR_RED}❌ 软件包 $package 修复过程中出错${COLOR_RESET}"
                 log_error "    ❌ 软件包 $package 修复过程中出错"
                 echo "最终结果: 修复过程出错" >> "$error_report"
                 echo "defconfig错误:" >> "$error_report"
@@ -393,10 +480,7 @@ EOF
         fi
         
         if [[ $failed_count -gt 0 ]]; then
-            log_error "❌ 未能恢复 $failed_count 个软件包"
-            log_error "📋 详细错误报告: $error_report"
-            
-            # 在控制台输出错误摘要
+            # 高亮显示错误摘要
             echo -e "\n${COLOR_RED}========================================${COLOR_RESET}"
             echo -e "${COLOR_RED}软件包依赖错误摘要${COLOR_RESET}"
             echo -e "${COLOR_RED}========================================${COLOR_RESET}"
@@ -404,6 +488,9 @@ EOF
             echo -e "${COLOR_YELLOW}失败软件包数量: ${failed_count}${COLOR_RESET}"
             echo -e "${COLOR_YELLOW}详细错误日志: ${error_report}${COLOR_RESET}"
             echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+            
+            log_error "❌ 未能恢复 $failed_count 个软件包"
+            log_error "📋 详细错误报告: $error_report"
             
             # 将错误报告添加到全局错误日志
             cat "$error_report" >> "${LOG_DIR}/dependency-errors.log"
@@ -623,6 +710,12 @@ build_firmware() {
     if [[ -s "$final_luci_file" ]]; then
         local package_count=$(wc -l < "$final_luci_file")
         echo -e "${COLOR_CYAN}软件包总数：${package_count}${COLOR_RESET}"
+        
+        # 显示最终软件包列表
+        echo -e "\n${COLOR_BLUE}📋 最终Luci软件包列表：${COLOR_RESET}"
+        while IFS= read -r package; do
+            echo -e "  ${COLOR_CYAN}📦 $package${COLOR_RESET}"
+        done < "$final_luci_file"
     else
         echo -e "${COLOR_YELLOW}⚠️ 未找到Luci软件包${COLOR_RESET}"
     fi
@@ -633,7 +726,8 @@ build_firmware() {
     log_info "🔥 开始编译固件..."
     local build_start_time=$(date +%s)
     
-    if make -j$(nproc) 2>&1 | tee "${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-make-build.log"; then
+    # 使用safe_execute来执行编译，以便高亮显示错误
+    if safe_execute "${CONFIG_LEVEL}-build" make -j$(nproc); then
         local build_end_time=$(date +%s)
         local build_duration=$((build_end_time - build_start_time))
         local build_hours=$((build_duration / 3600))
@@ -643,6 +737,13 @@ build_firmware() {
         echo -e "${COLOR_CYAN}编译耗时：${build_hours}小时${build_minutes}分钟${COLOR_RESET}"
         print_step_result "固件编译完成"
     else
+        # 高亮显示编译失败
+        echo -e "\n${COLOR_RED}========================================${COLOR_RESET}"
+        echo -e "${COLOR_RED}❌ 编译失败${COLOR_RESET}"
+        echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+        echo -e "${COLOR_YELLOW}日志文件: ${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-make-build.log${COLOR_RESET}"
+        echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+        
         log_error "❌ 编译失败!"
         tail -n 1000 "${LOG_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-make-build.log" >> "${LOG_DIR}/error.log"
         exit 1
@@ -655,6 +756,13 @@ build_firmware() {
     
     # 检查是否有依赖错误
     if [[ -f "${LOG_DIR}/dependency-errors.log" && -s "${LOG_DIR}/dependency-errors.log" ]]; then
+        # 高亮显示依赖错误
+        echo -e "\n${COLOR_RED}========================================${COLOR_RESET}"
+        echo -e "${COLOR_RED}⚠️ 检测到软件包依赖错误${COLOR_RESET}"
+        echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+        echo -e "${COLOR_YELLOW}详细日志: ${LOG_DIR}/dependency-errors.log${COLOR_RESET}"
+        echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+        
         log_error "❌ 检测到软件包依赖错误，请查看日志: ${LOG_DIR}/dependency-errors.log"
         # 将错误日志作为构建产物上传
         cp "${LOG_DIR}/dependency-errors.log" "${OUTPUT_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-dependency-errors.log"
