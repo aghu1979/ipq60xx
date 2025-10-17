@@ -223,12 +223,224 @@ cleanup_temp_files() {
 }
 
 # =============================================================================
+# 新增：软件包依赖检查和强制保留函数
+# =============================================================================
+
+# 检查并强制保留用户指定的软件包
+# 参数:
+#   $1 - 阶段标识 (base, pro, max, ultra)
+check_and_enforce_package_dependencies() {
+    local stage="$1"
+    log_info "🔍 检查${stage}配置的软件包依赖并强制保留用户指定软件包..."
+    
+    # 1. 提取补全前的luci软件包（用户需要的软件包）
+    local before_file="${LOG_DIR}/${REPO_SHORT}-${stage}-before-defconfig.txt"
+    extract_luci_packages ".config" "$before_file"
+    
+    # 2. 创建用户需要的软件包列表（强制保留）
+    local required_packages_file="${LOG_DIR}/${REPO_SHORT}-${stage}-required-packages.txt"
+    cp "$before_file" "$required_packages_file"
+    
+    # 3. 首次运行 make defconfig 补全依赖
+    log_info "🔄 首次运行 'make defconfig' 补全配置依赖..."
+    local defconfig_log="${LOG_DIR}/${REPO_SHORT}-${stage}-defconfig.log"
+    if make defconfig > "$defconfig_log" 2>&1; then
+        log_success "✅ ${stage}配置首次补全成功"
+    else
+        log_error "❌ ${stage}配置首次补全失败"
+        log_error "📋 错误详情 (最后20行):"
+        tail -n 20 "$defconfig_log" >&2
+        log_error "📋 完整日志: $defconfig_log"
+        return 1
+    fi
+    
+    # 4. 检查是否有用户需要的软件包被移除
+    local after_file="${LOG_DIR}/${REPO_SHORT}-${stage}-after-defconfig.txt"
+    extract_luci_packages ".config" "$after_file"
+    
+    local removed_file=$(mktemp)
+    comm -23 "$required_packages_file" "$after_file" > "$removed_file"
+    
+    if [[ -s "$removed_file" ]]; then
+        log_warning "⚠️ 检测到 ${stage} 配置中有用户需要的软件包被移除"
+        log_warning "📋 被移除的软件包列表："
+        cat "$removed_file" | sed 's/^/  - /'
+        
+        # 5. 尝试强制恢复被移除的软件包并添加其依赖
+        log_info "🔧 尝试强制恢复被移除的软件包并添加其依赖..."
+        local fix_log="${LOG_DIR}/${REPO_SHORT}-${stage}-force-restore-packages.log"
+        local error_report="${LOG_DIR}/${REPO_SHORT}-${stage}-dependency-errors.log"
+        local restored_count=0
+        local failed_count=0
+        
+        # 初始化错误报告
+        cat > "$error_report" << EOF
+===============================================================================
+ ${stage} 配置软件包依赖错误报告
+生成时间: $(date)
+仓库: $REPO_URL ($REPO_BRANCH)
+===============================================================================
+
+EOF
+        
+        while IFS= read -r package; do
+            log_info "  - 强制恢复软件包: $package"
+            echo "" >> "$error_report"
+            echo "处理软件包: $package" >> "$error_report"
+            echo "----------------------------------------" >> "$error_report"
+            
+            # 强制启用软件包
+            echo "CONFIG_PACKAGE_${package}=y" >> .config
+            
+            # 尝试查找并添加依赖
+            log_info "    🔍 查找软件包 $package 的依赖..."
+            local deps_found=false
+            
+            # 方法1: 尝试从feeds信息中获取依赖
+            if ./scripts/feeds info "$package" > "${LOG_DIR}/${REPO_SHORT}-${stage}-${package}-info.log" 2>&1; then
+                log_info "    📋 获取软件包信息成功"
+                deps_found=true
+                
+                # 提取依赖项
+                local deps=$(grep "Depends:" "${LOG_DIR}/${REPO_SHORT}-${stage}-${package}-info.log" | sed 's/Depends://')
+                if [[ -n "$deps" ]]; then
+                    log_info "    🔗 发现依赖: $deps"
+                    echo "发现的依赖: $deps" >> "$error_report"
+                    
+                    # 尝试添加依赖
+                    for dep in $deps; do
+                        # 清理依赖名称（移除版本要求等）
+                        dep=$(echo "$dep" | sed 's/[<>=].*//' | sed 's/^+//')
+                        if [[ -n "$dep" && "$dep" != "@@" ]]; then
+                            log_info "      - 尝试添加依赖: $dep"
+                            echo "尝试添加依赖: $dep" >> "$error_report"
+                            
+                            # 检查依赖是否是软件包
+                            if ./scripts/feeds list "$dep" > /dev/null 2>&1; then
+                                echo "CONFIG_PACKAGE_${dep}=y" >> .config
+                                log_success "        ✅ 依赖 $dep 已添加"
+                                echo "  结果: 成功添加" >> "$error_report"
+                            else
+                                log_warning "        ❌ 依赖 $dep 不是软件包或不存在"
+                                echo "  结果: 不是软件包或不存在" >> "$error_report"
+                            fi
+                        fi
+                    done
+                else
+                    log_info "    ℹ️ 未找到明确的依赖信息"
+                    echo "未找到明确的依赖信息" >> "$error_report"
+                fi
+            else
+                log_warning "    ❌ 无法获取软件包信息"
+                echo "无法获取软件包信息" >> "$error_report"
+                echo "错误详情:" >> "$error_report"
+                cat "${LOG_DIR}/${REPO_SHORT}-${stage}-${package}-info.log" >> "$error_report"
+            fi
+            
+            # 方法2: 尝试安装软件包（这会自动处理依赖）
+            log_info "    🔄 尝试安装软件包及其依赖..."
+            if ./scripts/feeds install "$package" >> "$fix_log" 2>&1; then
+                log_success "    ✅ 软件包 $package 安装成功"
+                echo "Feeds安装结果: 成功" >> "$error_report"
+                deps_found=true
+            else
+                log_warning "    ❌ 软件包 $package 安装失败"
+                echo "Feeds安装结果: 失败" >> "$error_report"
+                echo "错误详情:" >> "$error_report"
+                tail -n 20 "${LOG_DIR}/${REPO_SHORT}-${stage}-${package}-install.log" >> "$error_report" 2>/dev/null || true
+            fi
+            
+            # 再次运行 defconfig 检查是否修复成功
+            log_info "    🔄 再次运行 defconfig 检查..."
+            if make defconfig >> "$fix_log" 2>&1; then
+                # 检查软件包是否被保留
+                if grep -q "^CONFIG_PACKAGE_${package}=y" .config; then
+                    log_success "    ✅ 软件包 $package 强制恢复成功"
+                    echo "最终结果: 成功恢复" >> "$error_report"
+                    ((restored_count++))
+                else
+                    log_error "    ❌ 软件包 $package 仍然被移除"
+                    echo "最终结果: 恢复失败" >> "$error_report"
+                    
+                    # 生成详细错误信息
+                    log_error "    📋 软件包 $package 恢复失败详情:"
+                    log_error "      - 软件包信息日志: ${LOG_DIR}/${REPO_SHORT}-${stage}-${package}-info.log"
+                    log_error "      - 修复日志: $fix_log"
+                    
+                    # 添加到错误报告
+                    echo "错误详情:" >> "$error_report"
+                    echo "  软件包信息日志: ${LOG_DIR}/${REPO_SHORT}-${stage}-${package}-info.log" >> "$error_report"
+                    echo "  修复日志: $fix_log" >> "$error_report"
+                    
+                    # 尝试获取更多错误信息
+                    echo "defconfig输出中的相关错误:" >> "$error_report"
+                    grep -i "$package" "$defconfig_log" | tail -n 10 >> "$error_report" 2>/dev/null || echo "未找到相关错误信息" >> "$error_report"
+                    
+                    ((failed_count++))
+                fi
+            else
+                log_error "    ❌ 软件包 $package 修复过程中出错"
+                echo "最终结果: 修复过程出错" >> "$error_report"
+                echo "defconfig错误:" >> "$error_report"
+                tail -n 20 "$fix_log" >> "$error_report"
+                ((failed_count++))
+            fi
+        done < "$removed_file"
+        
+        # 6. 输出恢复结果摘要
+        if [[ $restored_count -gt 0 ]]; then
+            log_success "✅ 成功恢复 $restored_count 个软件包"
+        fi
+        
+        if [[ $failed_count -gt 0 ]]; then
+            log_error "❌ 未能恢复 $failed_count 个软件包"
+            log_error "📋 详细错误报告: $error_report"
+            
+            # 在控制台输出错误摘要
+            echo -e "\n${COLOR_RED}========================================${COLOR_RESET}"
+            echo -e "${COLOR_RED}软件包依赖错误摘要${COLOR_RESET}"
+            echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+            echo -e "${COLOR_YELLOW}阶段: ${stage}${COLOR_RESET}"
+            echo -e "${COLOR_YELLOW}失败软件包数量: ${failed_count}${COLOR_RESET}"
+            echo -e "${COLOR_YELLOW}详细错误日志: ${error_report}${COLOR_RESET}"
+            echo -e "${COLOR_RED}========================================${COLOR_RESET}"
+            
+            # 将错误报告添加到全局错误日志
+            cat "$error_report" >> "${LOG_DIR}/dependency-errors.log"
+            
+            # 如果有失败的软件包，返回错误状态
+            return 1
+        fi
+        
+        # 7. 重新提取补全后的软件包列表
+        extract_luci_packages ".config" "$after_file"
+        
+        # 8. 最终对比并显示差异
+        log_info "📊 修复后的软件包对比："
+        compare_and_show_package_diff "$required_packages_file" "$after_file" "${stage} (最终)"
+    else
+        log_success "✅ ${stage}配置中所有用户需要的软件包均保留"
+    fi
+    
+    rm -f "$removed_file"
+    log_success "✅ ${stage}配置软件包依赖检查完成"
+    return 0
+}
+
+# =============================================================================
 # 主函数
 # =============================================================================
 
 main() {
     # --- 修改点：在脚本开始时执行标准化 ---
     standardize_project_filenames
+    
+    # 初始化全局错误日志
+    mkdir -p "${LOG_DIR}"
+    echo "OpenWrt 构建软件包依赖错误日志" > "${LOG_DIR}/dependency-errors.log"
+    echo "生成时间: $(date)" >> "${LOG_DIR}/dependency-errors.log"
+    echo "========================================" >> "${LOG_DIR}/dependency-errors.log"
+    echo "" >> "${LOG_DIR}/dependency-errors.log"
 
     local command="${1:-}"
     case "$command" in
@@ -278,36 +490,18 @@ merge_configs_with_cat() {
     fi
 }
 
-# 格式化配置文件并补全依赖
+# 格式化配置文件并补全依赖 (修改版)
 # 参数:
 #   $1 - 阶段标识 (base, pro, max, ultra)
 format_and_defconfig() {
     local stage="$1"
     log_info "🎨 格式化${stage}配置文件并补全依赖..."
     
-    # 1. 提取补全前的luci软件包
-    local before_file="${LOG_DIR}/${REPO_SHORT}-${stage}-before-defconfig.txt"
-    extract_luci_packages ".config" "$before_file"
-    
-    # 2. 使用 make defconfig 补全依赖
-    log_info "🔄 使用 'make defconfig' 补全配置依赖..."
-    local defconfig_log="${LOG_DIR}/${REPO_SHORT}-${stage}-defconfig.log"
-    if make defconfig > "$defconfig_log" 2>&1; then
-        log_success "✅ ${stage}配置补全成功"
-    else
-        log_error "改动量很大，但为了健壮性，这是必要的。"
-        log_error "📋 错误详情 (最后20行):"
-        tail -n 20 "$defconfig_log" >&2
-        log_error "📋 完整日志: $defconfig_log"
-        exit 1
+    # 使用新的依赖检查和强制保留函数
+    if ! check_and_enforce_package_dependencies "$stage"; then
+        log_error "❌ ${stage}配置软件包依赖处理失败，但继续执行构建"
+        # 注意：这里不退出，而是继续执行，但记录错误
     fi
-    
-    # 3. 提取补全后的luci软件包
-    local after_file="${LOG_DIR}/${REPO_SHORT}-${stage}-after-defconfig.txt"
-    extract_luci_packages ".config" "$after_file"
-    
-    # 4. 对比并显示差异
-    compare_and_show_package_diff "$before_file" "$after_file" "${stage}"
     
     log_success "✅ ${stage}配置文件处理完成"
 }
@@ -459,6 +653,13 @@ build_firmware() {
     process_artifacts
     print_step_result "产出物处理完成"
     
+    # 检查是否有依赖错误
+    if [[ -f "${LOG_DIR}/dependency-errors.log" && -s "${LOG_DIR}/dependency-errors.log" ]]; then
+        log_error "❌ 检测到软件包依赖错误，请查看日志: ${LOG_DIR}/dependency-errors.log"
+        # 将错误日志作为构建产物上传
+        cp "${LOG_DIR}/dependency-errors.log" "${OUTPUT_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}-dependency-errors.log"
+    fi
+    
     cleanup_temp_files
     show_system_resources
     log_success "✅ 固件 ${REPO_SHORT}-${CONFIG_LEVEL} 编译完成"
@@ -472,6 +673,12 @@ process_artifacts() {
     log_info "📦 处理产出物..."
     local temp_dir="${OUTPUT_DIR}/${REPO_SHORT}-${CONFIG_LEVEL}"
     mkdir -p "$temp_dir"
+    
+    # 复制错误日志（如果存在）
+    if [[ -f "${LOG_DIR}/dependency-errors.log" && -s "${LOG_DIR}/dependency-errors.log" ]]; then
+        cp "${LOG_DIR}/dependency-errors.log" "${temp_dir}/${REPO_SHORT}-${CONFIG_LEVEL}-dependency-errors.log"
+        log_info "📋 已包含软件包依赖错误日志"
+    fi
     
     local devices=()
     while IFS= read -r line; do
