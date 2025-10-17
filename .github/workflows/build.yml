@@ -33,21 +33,15 @@ env:
 
 jobs:
   # ========================================
-  # 链一：准备并缓存基础环境
+  # 阶段一：准备并缓存基础环境
   # ========================================
   prepare-base-environments:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - branch: openwrt
-          - branch: immwrt
-          - branch: libwrt
-        config:
-          - Pro
-          - max
-          - ultra
+        # 修正点：正确配置matrix，为每个分支创建一个并行任务
+        branch: [openwrt, immwrt, libwrt]
     outputs:
       openwrt-hash: ${{ steps.set_hash.outputs.openwrt-hash }}
       immwrt-hash: ${{ steps.set_hash.outputs.immwrt-hash }}
@@ -169,26 +163,10 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
+      # 修正点：正确配置matrix，为每个分支和配置的组合创建一个并行任务
       matrix:
-        include:
-          - branch: openwrt
-            config: Pro
-          - branch: openwrt
-            config: max
-          - branch: openwrt
-            config: ultra
-          - branch: immwrt
-            config: Pro
-          - branch: immwrt
-            config: max
-          - branch: immwrt
-            config: ultra
-          - branch: libwrt
-            config: Pro
-          - branch: libwrt
-            config: max
-          - branch: libwrt
-            config: ultra
+        branch: [openwrt, immwrt, libwrt]
+        config: [Pro, max, ultra]
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
