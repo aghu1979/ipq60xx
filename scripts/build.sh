@@ -17,6 +17,56 @@ source "${SCRIPT_DIR}/utils.sh"
 source "${SCRIPT_DIR}/logger.sh"
 
 # =============================================================================
+# 新增：全局文件名标准化函数
+# =============================================================================
+
+# 标准化项目中的关键文件名为小写
+standardize_project_filenames() {
+    log_info "🔧 检查并标准化项目文件名..."
+    local renamed_count=0
+
+    # 1. 标准化 configs 目录下的 .config 文件
+    local configs_dir="${BASE_DIR}/configs"
+    if [[ -d "$configs_dir" ]]; then
+        while IFS= read -r -d '' config_file; do
+            local base_name=$(basename "$config_file" .config)
+            local lower_name=$(echo "$base_name" | tr '[:upper:]' '[:lower:]')
+            if [[ "$base_name" != "$lower_name" ]]; then
+                local new_path="${configs_dir}/${lower_name}.config"
+                log_info "  - 重命名配置文件: $config_file -> $new_path"
+                mv "$config_file" "$new_path"
+                ((renamed_count++))
+            fi
+        done < <(find "$configs_dir" -maxdepth 1 -name "*.config")
+    else
+        log_warning "configs目录不存在，跳过配置文件标准化。"
+    fi
+
+    # 2. 标准化 scripts 目录下的 .sh 文件
+    local scripts_dir="${BASE_DIR}/scripts"
+    if [[ -d "$scripts_dir" ]]; then
+        while IFS= read -r -d '' script_file; do
+            local base_name=$(basename "$script_file" .sh)
+            local lower_name=$(echo "$base_name" | tr '[:upper:]' '[:lower:]')
+            if [[ "$base_name" != "$lower_name" ]]; then
+                local new_path="${scripts_dir}/${lower_name}.sh"
+                log_info "  - 重命名脚本文件: $script_file -> $new_path"
+                mv "$script_file" "$new_path"
+                ((renamed_count++))
+            fi
+        done < <(find "$scripts_dir" -maxdepth 1 -name "*.sh")
+    else
+        log_warning "scripts目录不存在，跳过脚本文件标准化。"
+    fi
+
+    if [[ $renamed_count -gt 0 ]]; then
+        log_success "✅ 项目文件名标准化完成，共重命名 $renamed_count 个文件。"
+    else
+        log_info "✅ 所有项目文件名已是标准小写，无需操作。"
+    fi
+}
+
+# =============================================================================
 # 全局变量定义
 # =============================================================================
 
@@ -136,7 +186,7 @@ safe_execute() {
     "${command[@]}" 2>&1 | tee "$log_file" || exit_code=$?
     
     if [[ $exit_code -eq 0 ]]; then
-        log_success "✅ 命令执行成功: $description"
+        log_success "✅ 前令执行成功: $description"
     else
         log_warning "⚠️ 命令执行失败 (退出码: $exit_code): $description"
         log_warning "📋 详细日志: $log_file"
@@ -173,42 +223,13 @@ cleanup_temp_files() {
 }
 
 # =============================================================================
-# 新增：健壮性函数
-# =============================================================================
-
-# 标准化配置文件名为小写 (双重保险)
-normalize_config_filenames() {
-    log_info "🔧 检查并标准化配置文件名 (双重保险)..."
-    local configs_dir="${BASE_DIR}/configs"
-    if [[ ! -d "$configs_dir" ]]; then
-        log_warning "configs目录不存在，跳过文件名标准化。"
-        return
-    fi
-    
-    local renamed_count=0
-    while IFS= read -r -d '' config_file; do
-        local base_name=$(basename "$config_file" .config)
-        local lower_name=$(echo "$base_name" | tr '[:upper:]' '[:lower:]')
-        if [[ "$base_name" != "$lower_name" ]]; then
-            local new_path="${configs_dir}/${lower_name}.config"
-            log_info "  - 重命名: $config_file -> $new_path"
-            mv "$config_file" "$new_path"
-            ((renamed_count++))
-        fi
-    done < <(find "$configs_dir" -maxdepth 1 -name "*.config")
-
-    if [[ $renamed_count -gt 0 ]]; then
-        log_success "✅ 文件名标准化完成，共重命名 $renamed_count 个文件。"
-    else
-        log_info "✅ 所有配置文件名已是标准小写，无需操作。"
-    fi
-}
-
-# =============================================================================
 # 主函数
 # =============================================================================
 
 main() {
+    # --- 修改点：在脚本开始时执行标准化 ---
+    standardize_project_filenames
+
     local command="${1:-}"
     case "$command" in
         prepare-base)
@@ -274,7 +295,7 @@ format_and_defconfig() {
     if make defconfig > "$defconfig_log" 2>&1; then
         log_success "✅ ${stage}配置补全成功"
     else
-        log_error "❌ ${stage}配置补全失败!"
+        log_error "改动量很大，但为了健壮性，这是必要的。"
         log_error "📋 错误详情 (最后20行):"
         tail -n 20 "$defconfig_log" >&2
         log_error "📋 完整日志: $defconfig_log"
@@ -300,9 +321,6 @@ prepare_base_environment() {
     show_system_resources
     mkdir -p "${BUILD_DIR}" "${OUTPUT_DIR}" "${LOG_DIR}"
     
-    # --- 新增：执行文件名标准化 ---
-    normalize_config_filenames
-
     if [[ ! -d "${BUILD_DIR}/.git" ]]; then
         log_info "📥 克隆源码仓库: ${REPO_URL}"
         git clone "${REPO_URL}" "${BUILD_DIR}" --depth=1 -b "${REPO_BRANCH}"
@@ -447,7 +465,7 @@ build_firmware() {
 }
 
 # =============================================================================
-# 产出物处理
+# 修改点：产出物处理
 # =============================================================================
 
 process_artifacts() {
@@ -475,7 +493,7 @@ process_artifacts() {
             echo -e "  ${COLOR_GREEN}✅${COLOR_RESET} 工厂固件: $new_name"
         fi
         if [[ -n "$sysupgrade_bin" ]]; then
-            local new_name="${REPO_SHORT}-${SOC_NAME}-${device}-sysupgrade-${CONFIG_LEVEL}.bin"
+            local new_name="${REPO_SHORT}-${SOC_NAME}-${device}-sysupgrade-${CONFIG_LEVEL}.ini"
             cp "$sysupgrade_bin" "${temp_dir}/${new_name}"
             echo -e "  ${COLOR_GREEN}✅${COLOR_RESET} 系统升级固件: $new_name"
         fi
