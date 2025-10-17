@@ -40,11 +40,12 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
+      # --- 修改点：修正 matrix 语法 ---
       matrix:
         branch: [openwrt, immwrt, libwrt]
     outputs:
       openwrt-hash: ${{ steps.set_hash.outputs.openwrt-hash }}
-      - immwrt-hash: ${{ steps.set_hash.outputs.immwrt-hash }}
+      immwrt-hash: ${{ steps.set_hash.outputs.immwrt-hash }}
       libwrt-hash: ${{ steps.set_hash.outputs.libwrt-hash }}
     steps:
       - name: 📥 检出代码
