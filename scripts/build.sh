@@ -195,16 +195,16 @@ main() {
 # 核心配置处理函数
 # =============================================================================
 
-# 使用 kconfig.pl 合并配置文件
+# 使用 cat 合并配置文件 (最简单可靠的方法)
 # 参数:
 #   $1 - 输出文件路径
 #   $@ - 要合并的配置文件列表 (按顺序)
-merge_configs_with_kconfig() {
+merge_configs_with_cat() {
     local output_file="$1"
     shift
     local config_files=("$@")
     
-    log_info "🔧 使用 kconfig.pl 合并配置文件..."
+    log_info "🔧 使用 cat 合并配置文件..."
     log_info "  - 输出文件: $output_file"
     log_info "  - 合并顺序:"
     for cfg in "${config_files[@]}"; do
@@ -215,10 +215,9 @@ merge_configs_with_kconfig() {
         fi
     done
     
-    # --- 最终修改点：使用单引号括起来的 'm' ---
-    # 正确的命令格式是: ./scripts/kconfig.pl 'm' <file1> <file2> ...
-    # 'm' 必须是第一个参数，并且用引号括起来防止被shell展开
-    if ./scripts/kconfig.pl 'm' "${config_files[@]}" > "$output_file"; then
+    # --- 修改点：使用 cat 命令直接合并 ---
+    # 这是最简单、最可靠的方法，避免 kconfig.pl 的各种问题
+    if cat "${config_files[@]}" > "$output_file"; then
         log_success "✅ 配置文件合并成功"
     else
         log_error "❌ 配置文件合并失败!"
@@ -302,7 +301,7 @@ prepare_base_environment() {
     print_step_title "步骤6: 合并基础配置文件"
     local base_config="${BASE_DIR}/configs/base_${SOC_NAME}.config"
     local branch_config="${BASE_DIR}/configs/base_${REPO_SHORT}.config"
-    merge_configs_with_kconfig ".config" "$base_config" "$branch_config"
+    merge_configs_with_cat ".config" "$base_config" "$branch_config"
     print_step_result "基础配置文件合并完成"
     
     # 步骤7: 格式化并补全依赖
@@ -349,8 +348,8 @@ build_firmware() {
         exit 1
     fi
     
-    # 使用kconfig.pl合并：基础配置 + 软件包配置
-    merge_configs_with_kconfig ".config" ".config" "$config_file"
+    # 使用cat合并：基础配置 + 软件包配置
+    merge_configs_with_cat ".config" ".config" "$config_file"
     print_step_result "软件包配置合并完成"
     
     # 步骤2: 格式化并补全依赖
