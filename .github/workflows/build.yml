@@ -253,3 +253,14 @@ jobs:
             output/
             logs/
           retention-days: 7
+
+      # 添加错误日志上传步骤
+      - name: 📤 上传错误日志 (如果有)
+        if: failure() && steps.check_skip.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-logs-${{ matrix.branch }}-${{ matrix.config }}
+          path: |
+            logs/dependency-errors.log
+            logs/*-dependency-errors.log
+          retention-days: 30
