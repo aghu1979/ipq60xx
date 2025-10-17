@@ -27,7 +27,9 @@ REPO_SHORT="${REPO_SHORT:-openwrt}"
 
 # 芯片和配置信息（从环境变量获取，如果未设置则使用默认值）
 SOC_NAME="${SOC_NAME:-ipq60xx}"
+# --- 修改点：确保CONFIG_LEVEL为小写 ---
 CONFIG_LEVEL="${CONFIG_LEVEL:-Pro}"
+CONFIG_LEVEL=$(echo "$CONFIG_LEVEL" | tr '[:upper:]' '[:lower:]')
 
 # 时间戳（从环境变量获取，如果未设置则使用当前日期）
 TIMESTAMP="${TIMESTAMP:-$(date +%Y%m%d)}"
@@ -79,7 +81,7 @@ extract_luci_packages() {
     fi
 }
 
-# 对比软件包列表并显示差异
+# 对比软件包列表并显示差异 (优化版)
 compare_and_show_package_diff() {
     local before_file="$1"
     local after_file="$2"
@@ -99,21 +101,21 @@ compare_and_show_package_diff() {
     # 找出在补全后新增的软件包
     local added_file=$(mktemp)
     comm -13 "$before_file" "$after_file" > "$added_file"
+    echo -e "\n${COLOR_GREEN}✅ 新增的软件包 (由依赖自动引入)：${COLOR_RESET}"
     if [[ -s "$added_file" ]]; then
-        echo -e "\n${COLOR_GREEN}✅ 新增的软件包 (由依赖自动引入)：${COLOR_RESET}"
         cat "$added_file" | sed 's/^/  - /'
+    else
+        echo -e "  - 无"
     fi
     
     # 找出在补全后消失的软件包 (通常因为依赖不满足)
     local removed_file=$(mktemp)
     comm -23 "$before_file" "$after_file" > "$removed_file"
+    echo -e "\n${COLOR_RED}❌ 移除的软件包 (因依赖不满足)：${COLOR_RESET}"
     if [[ -s "$removed_file" ]]; then
-        echo -e "\n${COLOR_RED}❌ 移除的软件包 (因依赖不满足)：${COLOR_RESET}"
         cat "$removed_file" | sed 's/^/  - /'
-    fi
-    
-    if [[ ! -s "$added_file" ]] && [[ ! -s "$removed_file" ]]; then
-        echo -e "\n${COLOR_GREEN}✅ 无软件包变更${COLOR_RESET}"
+    else
+        echo -e "  - 无"
     fi
     
     rm -f "$added_file" "$removed_file"
@@ -171,6 +173,38 @@ cleanup_temp_files() {
 }
 
 # =============================================================================
+# 新增：健壮性函数
+# =============================================================================
+
+# 标准化配置文件名为小写 (双重保险)
+normalize_config_filenames() {
+    log_info "🔧 检查并标准化配置文件名 (双重保险)..."
+    local configs_dir="${BASE_DIR}/configs"
+    if [[ ! -d "$configs_dir" ]]; then
+        log_warning "configs目录不存在，跳过文件名标准化。"
+        return
+    fi
+    
+    local renamed_count=0
+    while IFS= read -r -d '' config_file; do
+        local base_name=$(basename "$config_file" .config)
+        local lower_name=$(echo "$base_name" | tr '[:upper:]' '[:lower:]')
+        if [[ "$base_name" != "$lower_name" ]]; then
+            local new_path="${configs_dir}/${lower_name}.config"
+            log_info "  - 重命名: $config_file -> $new_path"
+            mv "$config_file" "$new_path"
+            ((renamed_count++))
+        fi
+    done < <(find "$configs_dir" -maxdepth 1 -name "*.config")
+
+    if [[ $renamed_count -gt 0 ]]; then
+        log_success "✅ 文件名标准化完成，共重命名 $renamed_count 个文件。"
+    else
+        log_info "✅ 所有配置文件名已是标准小写，无需操作。"
+    fi
+}
+
+# =============================================================================
 # 主函数
 # =============================================================================
 
@@ -215,8 +249,6 @@ merge_configs_with_cat() {
         fi
     done
     
-    # --- 修改点：使用 cat 命令直接合并 ---
-    # 这是最简单、最可靠的方法，避免 kconfig.pl 的各种问题
     if cat "${config_files[@]}" > "$output_file"; then
         log_success "✅ 配置文件合并成功"
     else
@@ -227,7 +259,7 @@ merge_configs_with_cat() {
 
 # 格式化配置文件并补全依赖
 # 参数:
-#   $1 - 阶段标识 (base, Pro, max, ultra)
+#   $1 - 阶段标识 (base, pro, max, ultra)
 format_and_defconfig() {
     local stage="$1"
     log_info "🎨 格式化${stage}配置文件并补全依赖..."
@@ -268,6 +300,9 @@ prepare_base_environment() {
     show_system_resources
     mkdir -p "${BUILD_DIR}" "${OUTPUT_DIR}" "${LOG_DIR}"
     
+    # --- 新增：执行文件名标准化 ---
+    normalize_config_filenames
+
     if [[ ! -d "${BUILD_DIR}/.git" ]]; then
         log_info "📥 克隆源码仓库: ${REPO_URL}"
         git clone "${REPO_URL}" "${BUILD_DIR}" --depth=1 -b "${REPO_BRANCH}"
@@ -309,10 +344,21 @@ prepare_base_environment() {
     format_and_defconfig "base"
     print_step_result "基础配置处理完成"
     
-    # 步骤8: 预下载依赖
-    print_step_title "步骤8: 预下载基础依赖"
+    # 步骤8: 预下载依赖 (关键步骤：缓存前必须完成)
+    print_step_title "步骤8: 预下载基础依赖 (为缓存做准备)"
+    log_info "📥 预下载基础依赖，此步骤完成后将进行缓存..."
     if make download -j$(nproc) > "${LOG_DIR}/${REPO_SHORT}-make-download-base.log" 2>&1; then
         log_success "✅ 依赖下载成功"
+        
+        # 输出下载摘要
+        echo -e "\n${COLOR_BLUE}📋 依赖下载摘要：${COLOR_RESET}"
+        if [[ -d "dl" ]]; then
+            local download_count=$(find dl -type f | wc -l)
+            local download_size=$(du -sh dl | cut -f1)
+            echo -e "${COLOR_CYAN}已下载文件数量：${download_count}${COLOR_RESET}"
+            echo -e "${COLOR_CYAN}下载文件总大小：${download_size}${COLOR_RESET}"
+        fi
+        
     else
         log_warning "⚠️ 依赖下载失败，但继续执行"
     fi
@@ -354,6 +400,7 @@ build_firmware() {
     
     # 步骤2: 格式化并补全依赖
     print_step_title "步骤2: 格式化并补全最终配置依赖"
+    log_info "即将对 ${CONFIG_LEVEL} 配置进行依赖补全，并对比补全前后的软件包差异..."
     format_and_defconfig "${CONFIG_LEVEL}"
     print_step_result "最终配置处理完成"
     
