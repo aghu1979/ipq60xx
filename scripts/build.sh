@@ -507,7 +507,10 @@ build_firmware() {
     # 检查软件包配置文件是否存在
     local config_file="${BASE_DIR}/configs/${CONFIG_LEVEL}.config"
     if [[ ! -f "$config_file" ]]; then
+        # --- 修改点：增强错误诊断 ---
         log_error "❌ 软件包配置文件不存在: $config_file"
+        log_error "📁 configs目录内容："
+        ls -la "${BASE_DIR}/configs/" || echo "configs目录不存在"
         exit 1
     fi
     
@@ -631,6 +634,38 @@ build_firmware() {
 # 格式化和验证配置函数
 # =============================================================================
 
+# 预检查并清理无效的软件包配置
+pre_check_packages() {
+    log_info "🔍 预检查配置中的软件包是否存在..."
+    local temp_config=$(mktemp)
+    local missing_packages=()
+
+    while IFS= read -r line; do
+        if [[ $line =~ ^CONFIG_PACKAGE_(.+)=y$ ]]; then
+            local pkg_name="${BASH_REMATCH[1]}"
+            # 使用 find 命令查找软件包目录，更高效准确
+            if find package/ feeds/ -maxdepth 3 -name "${pkg_name}" -type d | grep -q .; then
+                echo "$line" >> "$temp_config"
+            else
+                missing_packages+=("$pkg_name")
+                echo "# CONFIG_PACKAGE_${pkg_name} is not found, disabled by script" >> "$temp_config"
+            fi
+        else
+            # 非软件包配置，直接保留
+            echo "$line" >> "$temp_config"
+        fi
+    done < ".config"
+
+    if [ ${#missing_packages[@]} -gt 0 ]; then
+        log_warning "⚠️ 以下软件包未找到，已自动禁用："
+        printf ' - %s\n' "${missing_packages[@]}"
+    fi
+
+    mv "$temp_config" .config
+    log_success "✅ 软件包预检查完成"
+}
+
+
 # 格式化和验证配置文件
 # 参数:
 #   $1 - 阶段标识 (base 或 final)
@@ -642,6 +677,9 @@ format_and_validate_config() {
     fi
     
     log_info "🎨 格式化${stage}配置文件..."
+    
+    # --- 新增步骤：预检查软件包 ---
+    pre_check_packages
     
     # 输出格式化前的配置文件信息
     echo -e "${COLOR_CYAN}📄 格式化前配置文件信息：${COLOR_RESET}"
@@ -673,7 +711,7 @@ format_and_validate_config() {
     # --- 尝试2: 如果方法1失败，直接调用 conf 工具 ---
     if [[ "$success" == "false" ]]; then
         log_info "🔄 尝试2: 直接调用 './scripts/config/conf --olddefconfig'..."
-        if ./scripts/config/conf --olddefconfig .config > "$format_log" 2>&1; then
+        if ./scripts/config/conf --olddefconfig > "$format_log" 2>&1; then
             log_success "✅ ${stage}配置格式化成功 (方法2)"
             success=true
         else
