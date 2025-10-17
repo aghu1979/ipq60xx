@@ -215,9 +215,10 @@ merge_configs_with_kconfig() {
         fi
     done
     
-    # --- 修改点：使用 'merge' 子命令 ---
-    # 正确的命令格式是: ./scripts/kconfig.pl merge <file1> <file2> ...
-    if ./scripts/kconfig.pl merge "${config_files[@]}" > "$output_file"; then
+    # --- 最终修改点：使用单引号括起来的 'm' ---
+    # 正确的命令格式是: ./scripts/kconfig.pl 'm' <file1> <file2> ...
+    # 'm' 必须是第一个参数，并且用引号括起来防止被shell展开
+    if ./scripts/kconfig.pl 'm' "${config_files[@]}" > "$output_file"; then
         log_success "✅ 配置文件合并成功"
     else
         log_error "❌ 配置文件合并失败!"
