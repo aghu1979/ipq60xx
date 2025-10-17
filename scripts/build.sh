@@ -643,33 +643,57 @@ format_and_validate_config() {
     
     log_info "🎨 格式化${stage}配置文件..."
     
+    # 输出格式化前的配置文件信息
+    echo -e "${COLOR_CYAN}📄 格式化前配置文件信息：${COLOR_RESET}"
+    echo -e "  - 文件大小: $(du -h .config | cut -f1)"
+    echo -e "  - 行数: $(wc -l < .config)"
+    
     # 提取格式化前的luci软件包
     local before_file="${LOG_DIR}/${REPO_SHORT}-${config_name}-before-format.txt"
     extract_luci_packages ".config" "$before_file"
     
     # 使用更详细的错误处理执行格式化
     local format_log="${LOG_DIR}/${REPO_SHORT}-${config_name}-format.log"
+    local success=false
     
-    # 设置终端类型以避免 "Error opening terminal: unknown" 错误
-    export TERM=dumb
-    
-    # 尝试格式化配置，如果失败则尝试非交互式方式
-    if make olddefconfig > "$format_log" 2>&1; then
-        log_success "✅ ${stage}配置格式化成功"
+    # --- 尝试1: 使用 timeout 限制 make olddefconfig ---
+    log_info "🔄 尝试1: 使用 'timeout 600 make olddefconfig' (10分钟超时)..."
+    if timeout 600 make olddefconfig > "$format_log" 2>&1; then
+        log_success "✅ ${stage}配置格式化成功 (方法1)"
+        success=true
     else
-        log_warning "⚠️ ${stage}配置格式化失败，尝试非交互式方式..."
-        
-        # 如果 olddefconfig 失败，尝试使用 defconfig
-        if make defconfig > "$format_log" 2>&1; then
-            log_success "✅ ${stage}配置格式化成功（使用defconfig）"
+        local exit_code=$?
+        if [[ $exit_code -eq 124 ]]; then
+            log_warning "⚠️ 方法1超时 (10分钟)，尝试备用方法..."
         else
-            log_error "❌ ${stage}配置格式化失败!"
-            log_error "📋 错误详情 (最后20行):"
-            tail -n 20 "$format_log" >&2
-            log_error "📋 完整日志: $format_log"
-            exit 1
+            log_warning "⚠️ 方法1失败 (退出码: $exit_code)，尝试备用方法..."
         fi
     fi
+    
+    # --- 尝试2: 如果方法1失败，直接调用 conf 工具 ---
+    if [[ "$success" == "false" ]]; then
+        log_info "🔄 尝试2: 直接调用 './scripts/config/conf --olddefconfig'..."
+        if ./scripts/config/conf --olddefconfig .config > "$format_log" 2>&1; then
+            log_success "✅ ${stage}配置格式化成功 (方法2)"
+            success=true
+        else
+            log_error "❌ 方法2也失败了!"
+        fi
+    fi
+    
+    # --- 如果所有方法都失败，则报错退出 ---
+    if [[ "$success" == "false" ]]; then
+        log_error "❌ ${stage}配置格式化失败!"
+        log_error "📋 错误详情 (最后20行):"
+        tail -n 20 "$format_log" >&2
+        log_error "📋 完整日志: $format_log"
+        exit 1
+    fi
+    
+    # 输出格式化后的配置文件信息
+    echo -e "${COLOR_CYAN}📄 格式化后配置文件信息：${COLOR_RESET}"
+    echo -e "  - 文件大小: $(du -h .config | cut -f1)"
+    echo -e "  - 行数: $(wc -l < .config)"
     
     # 提取格式化后的luci软件包
     local after_file="${LOG_DIR}/${REPO_SHORT}-${config_name}-after-format.txt"
