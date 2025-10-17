@@ -215,9 +215,9 @@ merge_configs_with_kconfig() {
         fi
     done
     
-    # --- 修改点：修正 kconfig.pl 命令参数 ---
-    # 'm' 是命令，应该放在最前面
-    if ./scripts/kconfig.pl m "${config_files[@]}" > "$output_file"; then
+    # --- 修改点：使用 'merge' 子命令 ---
+    # 正确的命令格式是: ./scripts/kconfig.pl merge <file1> <file2> ...
+    if ./scripts/kconfig.pl merge "${config_files[@]}" > "$output_file"; then
         log_success "✅ 配置文件合并成功"
     else
         log_error "❌ 配置文件合并失败!"
