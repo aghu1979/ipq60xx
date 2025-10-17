@@ -51,17 +51,17 @@ jobs:
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      # --- 修改点：注释掉第一阶段的磁盘清理 ---
-      # - name: 🧹 清理磁盘空间
-      #   uses: jlumbroso/free-disk-space@main
-      #   with:
-      #     tool-cache: true
-      #     android: true
-      #     dotnet: true
-      #     haskell: true
-      #     docker-images: true
-      #     large-packages: true
-      #     swap-storage: true
+      
+      - name: 🧹 清理磁盘空间
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          docker-images: true
+          large-packages: true
+          swap-storage: true
 
       - name: 🌍 设置环境变量
         run: |
