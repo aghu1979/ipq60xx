@@ -19,9 +19,10 @@ on:
         description: '选择配置 (留空编译全部)'
         required: false
         type: choice
+        # --- 修改点：配置选项改为小写 ---
         options:
           - ''
-          - Pro
+          - pro
           - max
           - ultra
 
@@ -33,64 +34,33 @@ env:
 
 jobs:
   # ========================================
-  # 阶段一：准备并缓存基础环境
+  # 阶段一：准备并缓存基础环境 (包含依赖)
   # ========================================
   prepare-base-environments:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
-        # 修正点：正确配置matrix，为每个分支创建一个并行任务
         branch: [openwrt, immwrt, libwrt]
     outputs:
       openwrt-hash: ${{ steps.set_hash.outputs.openwrt-hash }}
-      immwrt-hash: ${{ steps.set_hash.outputs.immwrt-hash }}
+      - immwrt-hash: ${{ steps.set_hash.outputs.immwrt-hash }}
       libwrt-hash: ${{ steps.set_hash.outputs.libwrt-hash }}
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      - name: 📁 验证目录结构
-        run: |
-          echo "🔍 当前工作目录: $(pwd)"
-          echo "🔍 GITHUB_WORKSPACE: ${{ github.workspace }}"
-          echo ""
-          echo "📁 根目录结构："
-          ls -la
-          echo ""
-          echo "📁 configs目录内容："
-          if [ -d "configs" ]; then
-            ls -la configs/
-          else
-            echo "❌ configs目录不存在"
-            exit 1
-          fi
-          echo ""
-          echo "📁 scripts目录内容："
-          if [ -d "scripts" ]; then
-            ls -la scripts/
-          else
-            echo "❌ scripts目录不存在"
-            exit 1
-          fi
-
-      - name: 🧹 清理磁盘空间
-        uses: jlumbroso/free-disk-space@main
-        with:
-          # 清理工具链，通常很大
-          tool-cache: true
-          # 清理Android SDK
-          android: true
-          # 清理.NET
-          dotnet: true
-          # 清理Haskell
-          haskell: true
-          # 清理Docker镜像
-          docker-images: true
-          # 清理大型包
-          large-packages: true
-          # 清理swap文件
-          swap-storage: true
+      # --- 修改点：注释掉第一阶段的磁盘清理 ---
+      # - name: 🧹 清理磁盘空间
+      #   uses: jlumbroso/free-disk-space@main
+      #   with:
+      #     tool-cache: true
+      #     android: true
+      #     dotnet: true
+      #     haskell: true
+      #     docker-images: true
+      #     large-packages: true
+      #     swap-storage: true
 
       - name: 🌍 设置环境变量
         run: |
@@ -106,45 +76,49 @@ jobs:
             echo "REPO_URL=${{ env.REPO_LIBWRT }}" >> $GITHUB_ENV
           fi
 
-      - name: 🔐 计算基础配置哈希
+      - name: 🔐 计算综合哈希 (优化版)
         id: calc_hash
         run: |
           echo "📍 当前工作目录: $(pwd)"
           
-          # 检查配置文件是否存在
           if [ ! -f "configs/base_${SOC_NAME}.config" ]; then
             echo "❌ 配置文件不存在: configs/base_${SOC_NAME}.config"
-            echo "📁 configs目录内容："
-            ls -la configs/ || echo "configs目录不存在"
             exit 1
           fi
           if [ ! -f "configs/base_${REPO_SHORT}.config" ]; then
             echo "❌ 配置文件不存在: configs/base_${REPO_SHORT}.config"
-            echo "📁 configs目录内容："
-            ls -la configs/ || echo "configs目录不存在"
             exit 1
           fi
-          
-          # 计算哈希值
-          HASH=$(sha256sum configs/base_${SOC_NAME}.config configs/base_${REPO_SHORT}.config | sha256sum | cut -d' ' -f1)
-          echo "hash=$HASH" >> $GITHUB_OUTPUT
-          echo "${{ matrix.branch }}=${{ steps.calc_hash.outputs.hash }}" >> hashes.txt
 
-      - name: 💾 缓存基础环境
+          echo "🔍 计算综合哈希值，包含源码、配置和自定义脚本..."
+          COMPREHENSIVE_HASH=$((
+            echo "REPO_URL=${REPO_URL}"
+            echo "REPO_BRANCH=${REPO_BRANCH}"
+            cat scripts/diy.sh 2>/dev/null || echo " -"
+            cat feeds.conf.default 2>/dev/null || echo " -"
+            cat "configs/base_${SOC_NAME}.config"
+            cat "configs/base_${REPO_SHORT}.config"
+          ) | sha256sum | cut -d' ' -f1)
+          
+          echo "comprehensive-hash=$COMPREHENSIVE_HASH" >> $GITHUB_OUTPUT
+          echo "${{ matrix.branch }}=${{ steps.calc_hash.outputs.comprehensive-hash }}" >> hashes.txt
+          echo "🔑 综合哈希值: $COMPREHENSIVE_HASH"
+
+      - name: 💾 缓存基础环境 (包含依赖)
         uses: actions/cache@v4
         with:
           path: |
             build/${{ matrix.branch }}/
             dl/
             feeds/
-          key: base-${{ matrix.branch }}-${{ steps.calc_hash.outputs.hash }}
+          key: base-${{ matrix.branch }}-${{ steps.calc_hash.outputs.comprehensive-hash }}
           restore-keys: |
             base-${{ matrix.branch }}-
 
-      - name: 🚀 准备基础环境
+      - name: 🚀 准备基础环境 (包含依赖下载)
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          echo "📦 为 ${{ matrix.branch }} 准备基础环境..."
+          echo "📦 为 ${{ matrix.branch }} 准备基础环境并下载依赖..."
           chmod +x scripts/*.sh
           ./scripts/build.sh prepare-base
 
@@ -163,10 +137,9 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
-      # 修正点：正确配置matrix，为每个分支和配置的组合创建一个并行任务
       matrix:
         branch: [openwrt, immwrt, libwrt]
-        config: [Pro, max, ultra]
+        config: [pro, max, ultra]
     steps:
       - name: 📥 检出代码
         uses: actions/checkout@v4
@@ -174,19 +147,12 @@ jobs:
       - name: 🧹 清理磁盘空间
         uses: jlumbroso/free-disk-space@main
         with:
-          # 清理工具链，通常很大
           tool-cache: true
-          # 清理Android SDK
           android: true
-          # 清理.NET
           dotnet: true
-          # 清理Haskell
           haskell: true
-          # 清理Docker镜像
           docker-images: true
-          # 清理大型包
           large-packages: true
-          # 清理swap文件
           swap-storage: true
 
       - name: 🔍 检查是否需要跳过当前矩阵任务
@@ -215,7 +181,8 @@ jobs:
         run: |
           echo "REPO_SHORT=${{ matrix.branch }}" >> $GITHUB_ENV
           echo "SOC_NAME=ipq60xx" >> $GITHUB_ENV
-          echo "CONFIG_LEVEL=${{ matrix.config }}" >> $GITHUB_ENV
+          # --- 修改点：将CONFIG_LEVEL转换为小写 ---
+          echo "CONFIG_LEVEL=$(echo '${{ matrix.config }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
           echo "TIMESTAMP=$(date +'%Y%m%d')" >> $GITHUB_ENV
           
           if [[ "${{ matrix.branch }}" == "openwrt" ]]; then
@@ -241,7 +208,7 @@ jobs:
           echo "hash=$HASH" >> $GITHUB_OUTPUT
           echo "🔑 Retrieved hash for ${{ matrix.branch }}: $HASH"
 
-      - name: 💾 恢复基础环境缓存
+      - name: 💾 恢复基础环境缓存 (包含依赖)
         if: steps.check_skip.outputs.skip == 'false'
         uses: actions/cache@v4
         with:
@@ -250,6 +217,15 @@ jobs:
             dl/
             feeds/
           key: base-${{ matrix.branch }}-${{ steps.get_hash.outputs.hash }}
+
+      - name: 💾 恢复/保存增量编译缓存
+        if: steps.check_skip.outputs.skip == 'false'
+        uses: actions/cache@v4
+        with:
+          path: build/${{ matrix.branch }}/
+          key: build-${{ matrix.branch }}
+          restore-keys: |
+            build-${{ matrix.branch }}-
 
       - name: 🔨 编译固件
         if: steps.check_skip.outputs.skip == 'false'
