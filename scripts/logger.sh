@@ -17,6 +17,10 @@ readonly COLOR_PURPLE='\033[0;35m'
 readonly COLOR_CYAN='\033[0;36m'
 readonly COLOR_WHITE='\033[1;37m'
 readonly COLOR_RESET='\033[0m'
+readonly COLOR_BOLD_RED='\033[1;31m'
+readonly COLOR_BOLD_GREEN='\033[1;32m'
+readonly COLOR_BOLD_YELLOW='\033[1;33m'
+readonly COLOR_BOLD_BLUE='\033[1;34m'
 
 # 日志文件
 LOG_DIR="${LOG_DIR:-$(pwd)/logs}"
@@ -37,16 +41,16 @@ log() {
     local pid=$$     
     case $level in
         $LOG_ERROR)
-            echo -e "${COLOR_RED}[ERROR]${COLOR_RESET} ${timestamp} [${pid}] ${message}"
+            echo -e "${COLOR_BOLD_RED}[ERROR]${COLOR_RESET} ${timestamp} [${pid}] ${COLOR_RED}${message}${COLOR_RESET}"
             ;;
         $LOG_WARN)
-            echo -e "${COLOR_YELLOW}[WARN]${COLOR_RESET} ${timestamp} [${pid}] ${message}"
+            echo -e "${COLOR_BOLD_YELLOW}[WARN]${COLOR_RESET} ${timestamp} [${pid}] ${COLOR_YELLOW}${message}${COLOR_RESET}"
             ;;
         $LOG_INFO)
-            echo -e "${COLOR_BLUE}[INFO]${COLOR_RESET} ${timestamp} [${pid}] ${message}"
+            echo -e "${COLOR_BOLD_BLUE}[INFO]${COLOR_RESET} ${timestamp} [${pid}] ${COLOR_BLUE}${message}${COLOR_RESET}"
             ;;
         $LOG_SUCCESS)
-            echo -e "${COLOR_GREEN}[SUCCESS]${COLOR_RESET} ${timestamp} [${pid}] ${message}"
+            echo -e "${COLOR_BOLD_GREEN}[SUCCESS]${COLOR_RESET} ${timestamp} [${pid}] ${COLOR_GREEN}${message}${COLOR_RESET}"
             ;;
     esac
 }
@@ -74,6 +78,13 @@ log_success() {
 # 错误处理
 handle_error() {
     local line_no=$1
+    echo -e "\n${COLOR_BOLD_RED}========================================${COLOR_RESET}"
+    echo -e "${COLOR_BOLD_RED}❌ 脚本执行错误${COLOR_RESET}"
+    echo -e "${COLOR_BOLD_RED}========================================${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}行号: ${line_no}${COLOR_RESET}"
+    echo -e "${COLOR_YELLOW}命令: ${BASH_COMMAND}${COLOR_RESET}"
+    echo -e "${COLOR_BOLD_RED}========================================${COLOR_RESET}"
+    
     log_error "脚本在第 ${line_no} 行发生错误!"
     log_error "错误命令: ${BASH_COMMAND}"
     
