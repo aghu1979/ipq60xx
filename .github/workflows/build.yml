@@ -51,17 +51,17 @@ jobs:
       - name: 📥 检出代码
         uses: actions/checkout@v4
 
-      
-      - name: 🧹 清理磁盘空间
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          docker-images: true
-          large-packages: true
-          swap-storage: true
+      # --- 修改点：注释掉第一阶段的磁盘清理 ---
+      # - name: 🧹 清理磁盘空间
+      #   uses: jlumbroso/free-disk-space@main
+      #   with:
+      #     tool-cache: true
+      #     android: true
+      #     dotnet: true
+      #     haskell: true
+      #     docker-images: true
+      #     large-packages: true
+      #     swap-storage: true
 
       - name: 🌍 设置环境变量
         run: |
@@ -263,4 +263,25 @@ jobs:
           path: |
             logs/dependency-errors.log
             logs/*-dependency-errors.log
+            logs/*-defconfig.log
+            logs/*-force-restore-packages.log
           retention-days: 30
+
+      # 添加依赖错误报告步骤
+      - name: 📋 生成依赖错误报告
+        if: always() && steps.check_skip.outputs.skip == 'false'
+        run: |
+          if [ -f "logs/dependency-errors.log" ] && [ -s "logs/dependency-errors.log" ]; then
+            echo "=========================================="
+            echo "📋 依赖错误报告摘要"
+            echo "=========================================="
+            echo "分支: ${{ matrix.branch }}"
+            echo "配置: ${{ matrix.config }}"
+            echo "=========================================="
+            head -n 50 logs/dependency-errors.log
+            echo "=========================================="
+            echo "完整日志请查看上传的构建产物"
+            echo "=========================================="
+          else
+            echo "✅ 无依赖错误"
+          fi
